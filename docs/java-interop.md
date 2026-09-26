@@ -3,15 +3,15 @@
 ## Java 调用 Kotlin 实现
 
 ```kotlin
-import cn.chuanwise.kotlinsuspendprojection.annotations.SuspendProjection
+import cn.chuanwise.kotlinsuspendprojection.annotations.JvmSuspendProjection
 
-@SuspendProjection
 interface UserService {
+    @JvmSuspendProjection
     suspend fun load(id: UserId): User
 }
 ```
 
-插件默认生成 Blocking、CompletionStage、CompletableFuture 和 Future Java 方法。Kotlin 实现只需实现 canonical suspend 方法：
+插件默认只生成 Blocking，并把它设为 primary。Kotlin 实现只需实现 canonical suspend 方法：
 
 ```kotlin
 class DefaultUserService : UserService {
@@ -22,23 +22,19 @@ class DefaultUserService : UserService {
 Java 调用：
 
 ```java
-User user = service.loadBlocking(idValue);
-CompletionStage<User> stage = service.loadCompletionStage(idValue);
-CompletableFuture<User> future = service.loadCompletableFuture(idValue);
-Future<User> legacy = service.loadFuture(idValue);
+User user = service.load(idValue);
 ```
 
-启用 `primary(...)` 后，所选 projection 的 Java caller 改为同名 `load(...)`，同时允许 Java 直接 `implements UserService`。同名投影对 Kotlin 源码隐藏，避免 Kotlin 调用时在 suspend 与投影入口之间产生歧义。
+通过注解或项目 `projections` 选择 CompletionStage、CompletableFuture、Future 后，会生成 `loadCompletionStage`、`loadCompletableFuture`、`loadFuture`。primary projection 使用同名 `load(...)`，并允许 Java 直接 `implements UserService`。同名投影对 Kotlin 源码隐藏，避免 Kotlin 调用时在 suspend 与投影入口之间产生歧义。
 
 ## Java 实现 Kotlin 接口
 
-Java 实现应选择明确的投影契约：
+默认 Blocking primary 使用 strict direct implementation，因此 Java 可以直接实现 canonical 接口：
 
 ```java
-public final class JdbcUserService
-        implements UserService.Projections.ViaBlocking {
+public final class JdbcUserService implements UserService {
     @Override
-    public User loadBlocking(String id) {
+    public User load(String id) {
         return query(id);
     }
 }
@@ -46,17 +42,17 @@ public final class JdbcUserService
 
 这里假设 `UserId` 是以 `String` 为底层表示的 value class。Java 签名使用 Kotlin/JVM lowering 后的实际类型。
 
-也可以实现 `ViaCompletionStage`、`ViaCompletableFuture` 或 `ViaFuture`。前两者通过 completion callback 恢复 coroutine；普通 Future imports 使用 `Future.get()` 并解包 `ExecutionException`。
+需要明确锁定实现契约或避免 direct implementation ABI 时，可以实现 `UserService.Projections.ViaBlocking` 并提供 `loadBlocking`。选择对应 projection 后，也可以实现 `ViaCompletionStage`、`ViaCompletableFuture` 或 `ViaFuture`。前两者通过 completion callback 恢复 coroutine；普通 Future imports 使用 `Future.get()` 并解包 `ExecutionException`。
 
-不建议手写 `Continuation` 来实现 lowered suspend ABI。`ViaXxx` 是项目支持和验证的 Java 实现入口。
+不建议手写 `Continuation` 来实现 lowered suspend ABI。direct implementation 与 `ViaXxx` 都是项目支持和验证的 Java 实现入口。
 
 `generatedTypes.namespace` 可以修改中间类型名。例如设置为 `Interop` 后，契约名称变为 `UserService.Interop.ViaBlocking`。
 
-## Java 直接实现
+## 配置 Java 直接实现
 
 ```kotlin
 suspendProjection {
-    primary(JvmProjection.BLOCKING)
+    primary = JvmProjection.BLOCKING
 }
 ```
 

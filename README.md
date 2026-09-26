@@ -45,20 +45,18 @@ plugins {
 }
 ```
 
-插件会自动配置当前投影所需的 annotations、runtime 和产物验证。默认只处理带 `@SuspendProjection` 的声明。
+插件会自动配置 annotations、runtime 和产物验证。默认只处理带 `@JvmSuspendProjection` 的声明，只生成 Blocking projection，并把 Blocking 设为 primary。
 
 ### 2. 声明 canonical suspend API
 
 ```kotlin
-import cn.chuanwise.kotlinsuspendprojection.annotations.SuspendProjection
+import cn.chuanwise.kotlinsuspendprojection.annotations.JvmSuspendProjection
 
 data class User(val id: String, val name: String)
 
-@SuspendProjection
 interface UserService {
+    @JvmSuspendProjection
     suspend fun findUser(id: String): User?
-
-    suspend fun <T : CharSequence> echo(value: T): T
 }
 ```
 
@@ -68,42 +66,29 @@ Kotlin 实现仍然只实现 suspend function：
 class KotlinUserService : UserService {
     override suspend fun findUser(id: String): User? =
         User(id, "Kotlin")
-
-    override suspend fun <T : CharSequence> echo(value: T): T = value
 }
 ```
 
 ### 3. Java 调用 Kotlin suspend 实现
 
-编译器会为所选函数生成 Blocking、`CompletionStage`、`CompletableFuture` 和 `Future` exports。Java 不需要构造 `Continuation`，也不需要安装编译器插件：
+Blocking 是默认 primary，所以 Java 使用同名普通方法，不需要构造 `Continuation`，也不需要安装编译器插件：
 
 ```java
 UserService service = new KotlinUserService();
 
-User user = service.findUserBlocking("42");
-String text = service.echoBlocking("hello");
-
-CompletionStage<User> stage = service.findUserCompletionStage("42");
-CompletableFuture<User> future = service.findUserCompletableFuture("42");
-Future<User> legacyFuture = service.findUserFuture("42");
+User user = service.findUser("42");
 ```
 
 ### 4. Java 实现 Kotlin suspend 接口
 
-生成的 `UserService.Projections.ViaBlocking` 是一个普通 JVM 接口。Java 只实现 Blocking 方法：
+默认 strict direct implementation 允许 Java 直接实现 canonical 接口。漏掉 `findUser` 会在 Java 编译期报错：
 
 ```java
-public final class JavaUserService
-        implements UserService.Projections.ViaBlocking {
+public final class JavaUserService implements UserService {
 
     @Override
-    public User findUserBlocking(String id) {
+    public User findUser(String id) {
         return new User(id, "Java");
-    }
-
-    @Override
-    public <T extends CharSequence> T echoBlocking(T value) {
-        return value;
     }
 }
 ```
@@ -117,7 +102,7 @@ val user = service.findUser("42")
 
 这也是本项目与单向 blocking bridge 的主要区别：投影既支持 **Java caller**，也支持 **Java implementer**。已经编译的 library 可以由普通 Java/Kotlin 工程零插件消费；Gradle 和 IDE 插件用于生成、验证及改善开发体验。
 
-实现方也可以选择非阻塞的 `CompletionStage` contract：
+生成的 `UserService.Projections.ViaBlocking` 也始终保留，供希望明确锁定 Blocking contract 的实现方使用。选择异步 projection 后，还可以实现非阻塞的 `ViaCompletionStage` contract：
 
 ```java
 public final class StageUserService
@@ -136,83 +121,102 @@ public final class StageUserService
 }
 ```
 
-同样会生成 `ViaCompletableFuture` 和 `ViaFuture`。`CompletionStage`/`CompletableFuture` imports 通过 completion callback 恢复 coroutine；普通 `Future` 没有标准 completion callback，因此 imports 会使用 `Future.get()` 等待。
+显式启用后也会生成 `ViaCompletableFuture` 和 `ViaFuture`。`CompletionStage`/`CompletableFuture` imports 通过 completion callback 恢复 coroutine；普通 `Future` 没有标准 completion callback，因此 imports 会使用 `Future.get()` 等待。
 
 ## 常用高级功能
 
-### Primary projection：Java 直接 `implements Foo`
+### 配置项目默认投影和 primary
 
-如果某一种 projection 是库的主要 Java API，可以启用预设：
+默认配置等价于：
 
 ```kotlin
 import cn.chuanwise.kotlinsuspendprojection.gradle.JvmProjection
 
 suspendProjection {
-    primary(JvmProjection.BLOCKING)
+    projections = setOf(JvmProjection.BLOCKING)
+    primary = JvmProjection.BLOCKING
 }
 ```
 
-也可以选择：
+项目可以选择其他默认投影：
 
 ```kotlin
-primary(JvmProjection.COMPLETION_STAGE)
-primary(JvmProjection.COMPLETABLE_FUTURE)
-primary(JvmProjection.FUTURE)
-```
-
-Java caller 使用与 Kotlin 相同的方法名：
-
-```java
-User user = service.findUser("42");
-```
-
-Java implementer 也可以直接实现 canonical 接口：
-
-```java
-public final class DirectJavaUserService implements UserService {
-    @Override
-    public User findUser(String id) {
-        return null;
-    }
-
-    @Override
-    public <T extends CharSequence> T echo(T value) {
-        return value;
-    }
-
+suspendProjection {
+    projections = setOf(
+        JvmProjection.COMPLETION_STAGE,
+        JvmProjection.COMPLETABLE_FUTURE,
+    )
+    primary = JvmProjection.COMPLETION_STAGE
 }
 ```
 
-`primary(BLOCKING)` 默认使用严格 direct implementation：Java 漏实现同步方法会在编译期失败；未安装编译器插件的 Kotlin 实现方会收到 ERROR 级 `@SubclassOptInRequired` 提醒。`Foo.Projections.ViaBlocking` 始终保留，供希望明确锁定 Blocking contract 的实现方使用。
+primary projection 使用同名 Java caller 和 strict direct implementation。Java 漏实现同步方法会在编译期失败；受插件处理的 Kotlin 实现会自动生成 bridge；未安装插件的 Kotlin 实现方默认会收到 ERROR 级 `@SubclassOptInRequired` 提醒。
 
 Direct implementation 会扩大 canonical 接口的公开 JVM ABI，也可能与 Java 多接口继承中的同名方法发生冲突。详细权衡见[配置与兼容性](docs/configuration-and-compatibility.md#direct-implementation-的权衡)。
 
-### 选择生成范围
+### 为声明选择多种 projection
 
-默认只处理带 `@SuspendProjection` 的接口或函数。
-
-标注整个接口：
+`@JvmSuspendProjection` 可以同时指定多个 `JvmProjectionType`。显式列表会替换继承到的默认列表，因此需要 Blocking 时也应明确写入：
 
 ```kotlin
-@SuspendProjection
+import cn.chuanwise.kotlinsuspendprojection.annotations.JvmProjectionType
+import cn.chuanwise.kotlinsuspendprojection.annotations.JvmSuspendProjection
+
+@JvmSuspendProjection(
+    JvmProjectionType.BLOCKING,
+    JvmProjectionType.COMPLETION_STAGE,
+    JvmProjectionType.COMPLETABLE_FUTURE,
+    JvmProjectionType.FUTURE,
+)
+suspend fun findUser(id: String): User?
+```
+
+这会生成同名 Blocking caller，以及 `findUserCompletionStage`、`findUserCompletableFuture`、`findUserFuture` 和对应的 `ViaXxx` 实现契约。
+
+### 文件、类和函数级策略
+
+注解可用于文件、类和函数。投影类型按以下顺序解析：
+
+```text
+函数显式 projections > 类显式 projections > 文件显式 projections > 项目 projections
+```
+
+空参数注解只选择声明，投影类型继续向外继承：
+
+```kotlin
+@file:cn.chuanwise.kotlinsuspendprojection.annotations.JvmSuspendProjection(
+    cn.chuanwise.kotlinsuspendprojection.annotations.JvmProjectionType.COMPLETION_STAGE,
+)
+
+package example
+```
+
+```kotlin
+import cn.chuanwise.kotlinsuspendprojection.annotations.JvmProjectionType
+import cn.chuanwise.kotlinsuspendprojection.annotations.JvmSuspendProjection
+
+@JvmSuspendProjection(JvmProjectionType.COMPLETABLE_FUTURE)
 interface EntireApi {
     suspend fun first()
+
+    @JvmSuspendProjection(JvmProjectionType.BLOCKING)
     suspend fun second()
 }
 ```
 
-只标注部分函数：
+`enable` 默认为 `true`。`enable = false` 会关闭对应函数或作用域，更具体的注解可以重新启用：
 
 ```kotlin
-interface PartialApi {
-    @SuspendProjection
-    suspend fun exposed()
+@JvmSuspendProjection(enable = false)
+interface DisabledApi {
+    suspend fun skipped()
 
-    suspend fun internalOnly()
+    @JvmSuspendProjection(enable = true)
+    suspend fun restored()
 }
 ```
 
-显式处理模块内全部合格声明：
+默认 `SelectionMode.ANNOTATED` 只处理被注解选择的声明。显式处理模块内全部合格声明：
 
 ```kotlin
 import cn.chuanwise.kotlinsuspendprojection.gradle.SelectionMode
@@ -223,6 +227,8 @@ suspendProjection {
     }
 }
 ```
+
+`@JvmSuspendProjection(enable = false)` 仍可在 ALL 模式中排除局部声明。
 
 ### 修改生成类型的 namespace
 
@@ -246,7 +252,7 @@ suspendProjection {
 
 ## 当前能力
 
-当前版本正式实现四种 JVM projection：
+当前版本实现四种 JVM projection。默认只选择 Blocking；其他 projection 可由项目配置或注解显式选择：
 
 | 方向 | 生成 API | 用途 |
 | --- | --- | --- |
@@ -270,7 +276,7 @@ suspendProjection {
 - public interface 中直接声明的 public suspend 成员；
 - Java 8 字节码目标、Kotlin 2.4.20 和 K2。
 
-四种 projection 都支持 exports、imports、same-name caller、direct implementation 和 `primary(...)`。原始 `Continuation` 仍只作为未来的显式 escape hatch 预留，当前不能被选为 policy projection。
+四种 projection 都支持 exports、imports、same-name caller、direct implementation 和 `primary = ...`。原始 `Continuation` 仍只作为未来的显式 escape hatch 预留，当前不能被选为 policy projection。
 
 后续 projection 仍会遵循同一模型：
 

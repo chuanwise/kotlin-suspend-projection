@@ -27,7 +27,7 @@ Kotlin Suspend Projection 遵循以下约束：
 给定：
 
 ```kotlin
-@SuspendProjection
+@JvmSuspendProjection
 interface Repository<T : Any> {
     suspend fun find(id: String): T?
 }
@@ -38,16 +38,12 @@ interface Repository<T : Any> {
 ```text
 Repository<T>
 ├── suspend find(String): T?
-├── findBlocking(String): T?            默认 Java blocking caller
-├── findCompletionStage(String): CompletionStage<T?>
-├── findCompletableFuture(String): CompletableFuture<T?>
-├── findFuture(String): Future<T?>
+├── find(String): T?                    默认 Blocking primary 的 Java caller
 └── Projections
-    ├── ViaBlocking<T>
-    ├── ViaCompletionStage<T>
-    ├── ViaCompletableFuture<T>
-    └── ViaFuture<T>
+    └── ViaBlocking<T>
 ```
+
+CompletionStage、CompletableFuture 和 Future 只有在项目配置或注解选择后才加入对应 caller 与 `ViaXxx`。
 
 实际 JVM 描述符会遵循 Kotlin 的类型擦除、value class lowering 和 context/extension receiver lowering 规则。
 
@@ -55,7 +51,7 @@ Repository<T>
 
 ### Kotlin 实现导出到 Java
 
-Blocking exports 调用 `awaitSuspendProjection`，启动 canonical suspend 方法并阻塞等待结果。CompletionStage、CompletableFuture 和 Future exports 启动同一个 canonical suspend 方法，并以相应 JDK 类型交付结果。启用 `primary(...)` 后，所选 projection 的 caller 改为与 canonical 方法同名。原始 lowered suspend 方法默认标记为 `@JvmSynthetic`，普通 Java 源码只看到适合调用的投影。
+Blocking exports 调用 `awaitSuspendProjection`，启动 canonical suspend 方法并阻塞等待结果。CompletionStage、CompletableFuture 和 Future exports 启动同一个 canonical suspend 方法，并以相应 JDK 类型交付结果。`primary = ...` 选择的 projection 使用与 canonical 方法同名的 Java caller。原始 lowered suspend 方法默认标记为 `@JvmSynthetic`，普通 Java 源码只看到适合调用的投影。
 
 基础 runtime 不依赖 `kotlinx.coroutines`。线程中断会终止等待并抛出 `InterruptedException`，但不会取消已经启动的底层协程，因此 capability 记录为 `waiter-interruption-only`。
 
@@ -85,7 +81,9 @@ direct implementation 方法成为抽象契约。编译器为受插件处理的 
 
 ## 选择与布局
 
-默认的 `SelectionMode.ANNOTATED` 只处理带 `@SuspendProjection` 的接口或函数。`SelectionMode.ALL` 是显式的全量 opt-in。
+默认的 `SelectionMode.ANNOTATED` 只处理带 `@JvmSuspendProjection` 的文件、接口或函数。`SelectionMode.ALL` 是显式的全量 opt-in。
+
+投影集合按函数、类、文件、项目的顺序继承；最近的非空 `projections` 列表生效。`enable` 状态也按函数、类、文件的最近注解决定，因此函数可以在禁用的外层作用域中重新启用。
 
 当前布局是 `Foo.<namespace>.ViaXxx`，其中 namespace 默认是 `Projections`，可以配置为其他合法 JVM 标识符。其他布局枚举尚未实现，配置阶段会明确拒绝。
 
