@@ -37,7 +37,17 @@ public class SuspendProjectionGradlePlugin : KotlinCompilerPluginSupportPlugin {
             target.afterEvaluate {
                 extension.validate()
                 if (extension.dependencies.automatic) {
-                    target.dependencies.add("compileOnly", "$GROUP:$ANNOTATIONS_ARTIFACT:$VERSION")
+                    val annotationsConfiguration = if (
+                        target.configurations.findByName("compileOnlyApi") != null
+                    ) {
+                        "compileOnlyApi"
+                    } else {
+                        "compileOnly"
+                    }
+                    target.dependencies.add(
+                        annotationsConfiguration,
+                        "$GROUP:$ANNOTATIONS_ARTIFACT:$VERSION",
+                    )
                     target.dependencies.add("implementation", "$GROUP:$RUNTIME_CORE_ARTIFACT:$VERSION")
                     target.dependencies.add("implementation", "$GROUP:$RUNTIME_JVM_ARTIFACT:$VERSION")
                 }
