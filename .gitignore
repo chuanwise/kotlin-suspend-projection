@@ -1,0 +1,7 @@
+/docs/.agents/
+/.gradle/
+/.gradle-test-kit/
+/.kotlin/
+**/build/
+/.idea/
+*.iml
