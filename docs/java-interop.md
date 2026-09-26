@@ -8,7 +8,7 @@ interface UserService {
 }
 ```
 
-插件在接口上生成同名、非 suspend 的 Java 方法。Kotlin 实现只需实现 canonical suspend 方法：
+插件默认在接口上生成带 `Blocking` 后缀的 Java 方法。Kotlin 实现只需实现 canonical suspend 方法：
 
 ```kotlin
 class DefaultUserService : UserService {
@@ -19,10 +19,10 @@ class DefaultUserService : UserService {
 Java 调用：
 
 ```java
-User user = service.load(idValue);
+User user = service.loadBlocking(idValue);
 ```
 
-同名投影对 Kotlin 源码隐藏，避免 Kotlin 调用时在 suspend 与 blocking 入口之间产生歧义。
+启用 `primary(JvmProjection.BLOCKING)` 后，Java caller 改为同名 `load(...)`，同时允许 Java 直接 `implements UserService`。同名投影对 Kotlin 源码隐藏，避免 Kotlin 调用时在 suspend 与 blocking 入口之间产生歧义。
 
 ## Java 实现 Kotlin 接口
 
@@ -41,6 +41,20 @@ public final class JdbcUserService
 这里假设 `UserId` 是以 `String` 为底层表示的 value class。Java 签名使用 Kotlin/JVM lowering 后的实际类型。
 
 不建议手写 `Continuation` 来实现 lowered suspend ABI。需要底层控制时仍可在字节码层访问 canonical 方法，但 `ViaBlocking` 是项目支持和验证的 Java 实现入口。
+
+`generatedTypes.namespace` 可以修改中间类型名。例如设置为 `Interop` 后，契约名称变为 `UserService.Interop.ViaBlocking`。
+
+## Java 直接实现
+
+```kotlin
+suspendProjection {
+    primary(JvmProjection.BLOCKING)
+}
+```
+
+此时 Java 可以直接实现 canonical 接口，并提供同名同步方法。`GUARDED_DEFAULT` 在缺少两侧实现时抛出 `InvalidSuspendProjectionPathException`；`STRICT` 则把同步方法生成为抽象契约。
+
+接口上的 `@SubclassOptInRequired` 会提醒未安装插件的 Kotlin 实现方。提醒级别由 `uninstrumentedKotlin` 配置；Java 不受 Kotlin opt-in 机制影响。
 
 ## 泛型 owner
 

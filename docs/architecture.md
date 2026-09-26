@@ -37,7 +37,7 @@ interface Repository<T : Any> {
 ```text
 Repository<T>
 ├── suspend find(String): T?
-├── find(String): T?                    Java 同名 blocking 入口
+├── findBlocking(String): T?            默认 Java blocking caller
 └── Projections
     └── ViaBlocking<T> : Repository<T>
         ├── findBlocking(String): T?     Java 实现契约
@@ -50,7 +50,7 @@ Repository<T>
 
 ### Kotlin 实现导出到 Java
 
-同名非 suspend 方法调用 `awaitSuspendProjection`，后者启动 canonical suspend 方法并阻塞等待结果。原始 lowered suspend 方法会标记为 `@JvmSynthetic`，普通 Java 源码只看到适合调用的投影。
+默认生成的 `xxxBlocking` 方法调用 `awaitSuspendProjection`，后者启动 canonical suspend 方法并阻塞等待结果。启用 `primary(BLOCKING)` 后，caller 改为与 canonical 方法同名。原始 lowered suspend 方法默认标记为 `@JvmSynthetic`，普通 Java 源码只看到适合调用的投影。
 
 基础 runtime 不依赖 `kotlinx.coroutines`。线程中断会终止等待并抛出 `InterruptedException`，但不会取消已经启动的底层协程，因此 capability 记录为 `waiter-interruption-only`。
 
@@ -62,15 +62,23 @@ Java 类实现 `Foo.Projections.ViaBlocking` 的 `xxxBlocking` 方法。生成�
 
 ### `GUARDED_DEFAULT`
 
-默认策略。接口上的 canonical suspend 方法和同名 blocking 方法都有互相桥接能力，因此 Java 可以直接实现任意一侧。
+仅在启用 Blocking direct implementation 后适用。接口上的 canonical suspend 方法和同步方法都有互相桥接能力，因此 Java 可以直接实现同步一侧。
 
 如果实现类两侧都没有实现，默认桥会形成递归调用。生成的 path guard 会在同一路径重入时抛出 `InvalidSuspendProjectionPathException`。
 
 ### `STRICT`
 
-同名 blocking 投影为抽象契约。编译器为受插件处理的 Kotlin 实现生成桥，artifact verifier 检查具体类是否满足 strict 投影。
+direct implementation 方法成为抽象契约。编译器为受插件处理的 Kotlin 实现生成桥，artifact verifier 检查具体类是否满足 strict 投影。
 
 `STRICT` 能更早暴露缺失实现，但它改变了公开接口 ABI。库发布后切换策略应视为兼容性变更。
+
+启用 direct implementation 时，canonical 接口还会生成 `@SubclassOptInRequired`。它只负责提醒没有安装插件的 Kotlin 子类实现方；安装 Gradle 插件的 compilation 会自动 opt-in，实际桥接与强制检查仍由编译器插件完成。
+
+## 选择与布局
+
+`SelectionMode.ALL` 处理全部符合条件的声明。`SelectionMode.ANNOTATED` 只处理带 `@SuspendProjection` 的接口或函数。
+
+当前布局是 `Foo.<namespace>.ViaBlocking`，其中 namespace 默认是 `Projections`，可以配置为其他合法 JVM 标识符。其他布局枚举尚未实现，配置阶段会明确拒绝。
 
 ## Metadata
 

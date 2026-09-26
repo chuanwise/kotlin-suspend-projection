@@ -27,7 +27,10 @@ gradle :gradle-plugin:test --tests "*SuspendProjectionGradlePluginTest"
 修改 FIR/IR 生成逻辑时，至少应验证：
 
 - Kotlin 实现可以从 Java 通过同名 blocking 方法调用；
+- 默认命名 caller 与 `primary(BLOCKING)` 同名 caller 均符合配置；
 - Java 可以实现 `Foo.Projections.ViaBlocking`；
+- `@SuspendProjection` 类级和函数级选择不会泄漏到未选择声明；
+- 自定义 generated namespace 会同步作用于 FIR、IR 和 Java ABI；
 - canonical suspend 调用可以到达 Java blocking 实现；
 - owner 和 function 泛型上界保持正确；
 - context/extension receiver 参数完整且顺序正确；
@@ -38,9 +41,9 @@ gradle :gradle-plugin:test --tests "*SuspendProjectionGradlePluginTest"
 
 ## 版本同步
 
-当前版本常量分别存在于根构建、Gradle 插件和生成 metadata 中。发布前必须同步检查：
+依赖与插件版本统一声明在 `gradle/libs.versions.toml`。生成代码和发布坐标仍有源码常量，发布前必须同步检查：
 
-- 根项目 `version`；
+- Version Catalog 的 `versions.project` 与 `versions.kotlin`；
 - Gradle 插件依赖坐标；
 - `SuspendProjectionMeta.generatorVersion`；
 - generated-code version 与 runtime 支持范围。

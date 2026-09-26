@@ -1,58 +1,136 @@
 # 配置与兼容性
 
-## Gradle 扩展
+## 完整 Gradle DSL
+
+所有配置都是普通 Kotlin 属性，使用 `property = value`：
 
 ```kotlin
+import cn.chuanwise.kotlinsuspendprojection.gradle.*
+
 suspendProjection {
-    enabled.set(true)
-    directImplementationEnforcement.set(
-        DirectImplementationEnforcement.GUARDED_DEFAULT,
-    )
-    addDependencies.set(true)
-    verifyArtifacts.set(true)
-    emitCompatibilityGuard.set(true)
-    emitInvalidPathGuard.set(true)
+    enabled = true
+
+    selection { mode = SelectionMode.ALL }
+    generatedTypes {
+        layout = GeneratedTypeLayout.NESTED_NAMESPACE
+        namespace = "Projections"
+    }
+
+    jvm {
+        rawSuspendAbi = RawSuspendAbi.HIDDEN
+        sameNameCaller = JvmProjection.NONE
+
+        directImplementation {
+            projection = JvmProjection.NONE
+            enforcement = DirectImplementationEnforcement.GUARDED_DEFAULT
+            uninstrumentedKotlin = UninstrumentedKotlin.WARNING
+        }
+        blocking {
+            exports {
+                enabled = true
+                emitNamedCaller = true
+            }
+            imports {
+                enabled = true
+                execution = BlockingExecution.DIRECT
+                interruption = BlockingInterruption.THROW_CHECKED
+            }
+        }
+        runtimeGuards {
+            compatibility = true
+            invalidPath = true
+        }
+    }
+
+    dependencies { automatic = true }
+    verification { enabled = true }
 }
 ```
 
-| 属性 | 默认值 | 含义 |
+## 配置分组
+
+| 配置 | 默认值 | 含义 |
 | --- | --- | --- |
 | `enabled` | `true` | 是否对 JVM compilation 应用编译器插件 |
-| `directImplementationEnforcement` | `GUARDED_DEFAULT` | 直接实现使用 guarded defaults 或 strict contract |
-| `addDependencies` | `true` | 是否自动加入 annotations 和 runtime 依赖 |
-| `verifyArtifacts` | `true` | `verifySuspendProjections` 是否实际运行 |
-| `emitCompatibilityGuard` | `true` | 是否把 runtime/generated-code 版本检查写入生成桥 |
-| `emitInvalidPathGuard` | `true` | 是否把递归无效路径检查写入生成桥 |
+| `selection.mode` | `ALL` | 处理全部合格成员，或只处理 `@SuspendProjection` 声明 |
+| `generatedTypes.layout` | `NESTED_NAMESPACE` | 生成类型布局 |
+| `generatedTypes.namespace` | `Projections` | 嵌套 namespace 类型名 |
+| `jvm.rawSuspendAbi` | `HIDDEN` | 是否用 `@JvmSynthetic` 对 Java 源码隐藏 lowered suspend ABI |
+| `jvm.sameNameCaller` | `NONE` | 是否生成同名 Java caller |
+| `jvm.directImplementation.projection` | `NONE` | Java 是否可直接实现 canonical 接口的同步投影 |
+| `jvm.directImplementation.enforcement` | `GUARDED_DEFAULT` | 使用运行时守卫默认桥或 strict 抽象契约 |
+| `jvm.directImplementation.uninstrumentedKotlin` | `WARNING` | 无插件 Kotlin 子类的 opt-in 级别 |
+| `jvm.blocking.exports.enabled` | `true` | suspend 实现是否导出 Blocking caller |
+| `jvm.blocking.exports.emitNamedCaller` | `true` | 是否生成 `fooBlocking` caller |
+| `jvm.blocking.imports.enabled` | `true` | 是否生成 `ViaBlocking` 实现契约 |
+| `jvm.runtimeGuards.compatibility` | `true` | 是否写入生成代码版本检查 |
+| `jvm.runtimeGuards.invalidPath` | `true` | 是否写入无效递归路径检查 |
+| `dependencies.automatic` | `true` | 是否自动加入 annotations/runtime 依赖 |
+| `verification.enabled` | `true` | `verifySuspendProjections` 是否实际运行 |
 
-关闭 `addDependencies` 时，项目必须自行提供版本完全一致的：
+## 注解选择
 
-```text
-dev.suspendprojection:annotations
-dev.suspendprojection:runtime-core
-dev.suspendprojection:runtime-jvm
-```
-
-编译器插件在缺失 `SuspendProjectionMeta` 或 `awaitSuspendProjection` 时会直接报错，而不是生成不完整桥。
-
-## 验证任务
-
-插件注册 `verifySuspendProjections`，并让 `check` 依赖它。任务读取项目产出的 JAR，检查：
-
-- `@SuspendProjectionMeta` schema 是否受支持；
-- generated-code version 是否位于 runtime 支持范围；
-- `STRICT` 模式下具体实现是否提供要求的投影方法。
-
-仅关闭 runtime guard 不会关闭 artifact verification。要跳过后者必须显式设置：
+`SelectionMode.ANNOTATED` 支持类级和函数级选择：
 
 ```kotlin
-suspendProjection {
-    verifyArtifacts.set(false)
+@SuspendProjection
+interface EntireApi {
+    suspend fun first()
+    suspend fun second()
+}
+
+interface PartialApi {
+    @SuspendProjection
+    suspend fun projected()
+
+    suspend fun untouched()
 }
 ```
 
-## Runtime 属性
+注解的完整名称为 `cn.chuanwise.kotlinsuspendprojection.annotations.SuspendProjection`，保留级别为 `BINARY`。
 
-以下系统属性只在属性值等于 `false`（忽略大小写）时关闭检查：
+## 主投影预设
+
+```kotlin
+suspendProjection {
+    primary(JvmProjection.BLOCKING)
+}
+```
+
+等价于启用 Blocking 同名 caller、Blocking direct implementation 和 Blocking imports，并关闭额外的命名 caller。其他细节仍可在预设之后覆盖。
+
+## 当前实现边界
+
+当前版本完整实现：
+
+- `GeneratedTypeLayout.NESTED_NAMESPACE`；
+- `JvmProjection.NONE` 与 `JvmProjection.BLOCKING` 策略；
+- `BlockingExecution.DIRECT`；
+- `BlockingInterruption.THROW_CHECKED`。
+
+其他枚举值是后续 ABI 的保留名称。选择尚未实现的值会在 Gradle 配置阶段报错，避免配置看似生效但产物没有变化。
+
+## 自动依赖与验证
+
+关闭 `dependencies.automatic` 时，项目必须自行提供版本一致的：
+
+```text
+cn.chuanwise.kotlinsuspendprojection:annotations
+cn.chuanwise.kotlinsuspendprojection:runtime-core
+cn.chuanwise.kotlinsuspendprojection:runtime-jvm
+```
+
+插件注册 `verifySuspendProjections` 并接入 `check`。任务检查 `@SuspendProjectionMeta` schema、generated-code version 和 strict 实现契约。仅关闭 runtime guard 不会关闭产物验证：
+
+```kotlin
+suspendProjection {
+    verification { enabled = false }
+}
+```
+
+## Runtime 系统属性
+
+以下属性值为 `false`（忽略大小写）时关闭对应检查：
 
 | JVM 属性 | 作用 |
 | --- | --- |
@@ -60,31 +138,16 @@ suspendProjection {
 | `kotlin.suspend.projection.runtime.compatibility` | 仅关闭版本兼容性检查 |
 | `kotlin.suspend.projection.runtime.invalidPath` | 仅关闭无效路径检查 |
 
-这些开关适合诊断或紧急绕过，不应替代发布前验证。
+编译配置决定生成代码是否包含检查；系统属性用于部署时临时关闭已经生成的检查。
 
-## 当前兼容性边界
+## 兼容性边界
 
 | 项目 | 当前状态 |
 | --- | --- |
 | Kotlin | `2.4.20`，K2 |
 | JVM target | Java 8 |
 | JVM default mode | `NO_COMPATIBILITY` |
-| Gradle 插件目标 | Kotlin JVM compilation |
 | generated-code version | `1` |
 | metadata schema | `1` |
 
-编译器插件使用 Kotlin compiler internal API，因此 Kotlin minor 版本升级必须经过独立适配和完整矩阵测试。当前实现不承诺直接兼容其他 Kotlin minor 版本。
-
-`SuspendProjectionGeneratedCode.MIN_SUPPORTED_VERSION` 与 `MAX_SUPPORTED_VERSION` 定义 runtime 能执行的生成代码范围。兼容性判断基于范围，而不是要求 generator 与 runtime 的发布版本字符串完全相等。
-
-## ABI 注意事项
-
-以下变化应按公开 ABI 变化处理：
-
-- 切换 `GUARDED_DEFAULT` 与 `STRICT`；
-- 修改生成方法命名或参数顺序；
-- 修改 value class 的底层类型；
-- 修改 owner/function 泛型上界；
-- 关闭或改变某类公开投影。
-
-`@SuspendProjectionMeta` 是可观察 metadata，但运行时不依赖其反射可见性。
+runtime 通过 `SuspendProjectionGeneratedCode.MIN_SUPPORTED_VERSION` 与 `MAX_SUPPORTED_VERSION` 声明可执行的生成代码范围，不要求 generator 与 runtime 的发布字符串完全相同。`@SuspendProjectionMeta` 保留更多可观察信息，但运行时语义不依赖反射读取它。
