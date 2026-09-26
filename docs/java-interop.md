@@ -3,12 +3,15 @@
 ## Java 调用 Kotlin 实现
 
 ```kotlin
+import cn.chuanwise.kotlinsuspendprojection.annotations.SuspendProjection
+
+@SuspendProjection
 interface UserService {
     suspend fun load(id: UserId): User
 }
 ```
 
-插件默认在接口上生成带 `Blocking` 后缀的 Java 方法。Kotlin 实现只需实现 canonical suspend 方法：
+插件默认生成 Blocking、CompletionStage、CompletableFuture 和 Future Java 方法。Kotlin 实现只需实现 canonical suspend 方法：
 
 ```kotlin
 class DefaultUserService : UserService {
@@ -20,9 +23,12 @@ Java 调用：
 
 ```java
 User user = service.loadBlocking(idValue);
+CompletionStage<User> stage = service.loadCompletionStage(idValue);
+CompletableFuture<User> future = service.loadCompletableFuture(idValue);
+Future<User> legacy = service.loadFuture(idValue);
 ```
 
-启用 `primary(JvmProjection.BLOCKING)` 后，Java caller 改为同名 `load(...)`，同时允许 Java 直接 `implements UserService`。同名投影对 Kotlin 源码隐藏，避免 Kotlin 调用时在 suspend 与 blocking 入口之间产生歧义。
+启用 `primary(...)` 后，所选 projection 的 Java caller 改为同名 `load(...)`，同时允许 Java 直接 `implements UserService`。同名投影对 Kotlin 源码隐藏，避免 Kotlin 调用时在 suspend 与投影入口之间产生歧义。
 
 ## Java 实现 Kotlin 接口
 
@@ -40,7 +46,9 @@ public final class JdbcUserService
 
 这里假设 `UserId` 是以 `String` 为底层表示的 value class。Java 签名使用 Kotlin/JVM lowering 后的实际类型。
 
-不建议手写 `Continuation` 来实现 lowered suspend ABI。需要底层控制时仍可在字节码层访问 canonical 方法，但 `ViaBlocking` 是项目支持和验证的 Java 实现入口。
+也可以实现 `ViaCompletionStage`、`ViaCompletableFuture` 或 `ViaFuture`。前两者通过 completion callback 恢复 coroutine；普通 Future imports 使用 `Future.get()` 并解包 `ExecutionException`。
+
+不建议手写 `Continuation` 来实现 lowered suspend ABI。`ViaXxx` 是项目支持和验证的 Java 实现入口。
 
 `generatedTypes.namespace` 可以修改中间类型名。例如设置为 `Interop` 后，契约名称变为 `UserService.Interop.ViaBlocking`。
 
@@ -54,9 +62,11 @@ suspendProjection {
 
 此时 Java 可以直接实现 canonical 接口，并提供同名同步方法。主投影默认使用 `STRICT`，同步方法是抽象契约，漏实现会由 Java 编译器报告。
 
+选择 `COMPLETION_STAGE`、`COMPLETABLE_FUTURE` 或 `FUTURE` 时，同名方法返回相应 JDK 类型，而不是同步结果。
+
 接口上的 `@SubclassOptInRequired` 默认以 ERROR 阻止未安装插件的 Kotlin 实现方。提醒级别可通过 `uninstrumentedKotlin` 调整；Java 不受 Kotlin opt-in 机制影响。
 
-direct implementation 会增加接口 ABI，并可能与 Java 多接口继承中的同名方法冲突。Kotlin 实现方需要插件生成 strict bridge；手工 opt-in 不会代替代码生成。需要零插件 Kotlin 实现时，优先使用 `ViaBlocking`。
+direct implementation 会增加接口 ABI，并可能与 Java 多接口继承中的同名方法冲突。Kotlin 实现方需要插件生成 strict bridge；手工 opt-in 不会代替代码生成。需要零插件实现时，优先使用明确的 `ViaXxx`。
 
 ## 泛型 owner
 

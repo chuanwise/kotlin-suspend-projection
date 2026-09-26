@@ -30,6 +30,9 @@ gradle :gradle-plugin:test --tests "*SuspendProjectionGradlePluginTest"
 - 默认命名 caller 与 `primary(BLOCKING)` 同名 caller 均符合配置；
 - 默认只生成带 `@SuspendProjection` 的声明，`SelectionMode.ALL` 可显式扩大范围；
 - Java 可以实现 `Foo.Projections.ViaBlocking`；
+- Java 可以实现 `ViaCompletionStage`、`ViaCompletableFuture` 和 `ViaFuture`；
+- CompletionStage/CompletableFuture imports 不阻塞，Future imports 明确使用 `get()`；
+- Blocking 与非 Blocking primary 都能生成 strict Kotlin bridge；
 - `primary(BLOCKING)` 下 Java 漏实现 strict 方法会在编译期失败；
 - `@SuspendProjection` 类级和函数级选择不会泄漏到未选择声明；
 - 自定义 generated namespace 会同步作用于 FIR、IR 和 Java ABI；

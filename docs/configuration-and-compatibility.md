@@ -34,6 +34,18 @@ suspendProjection {
                 interruption = BlockingInterruption.THROW_CHECKED
             }
         }
+        completionStage {
+            exports { enabled = true; emitNamedCaller = true }
+            imports { enabled = true }
+        }
+        completableFuture {
+            exports { enabled = true; emitNamedCaller = true }
+            imports { enabled = true }
+        }
+        future {
+            exports { enabled = true; emitNamedCaller = true }
+            imports { enabled = true }
+        }
         runtimeGuards {
             compatibility = true
             invalidPath = true
@@ -55,12 +67,21 @@ suspendProjection {
 | `generatedTypes.namespace` | `Projections` | 嵌套 namespace 类型名 |
 | `jvm.rawSuspendAbi` | `HIDDEN` | 是否用 `@JvmSynthetic` 对 Java 源码隐藏 lowered suspend ABI |
 | `jvm.sameNameCaller` | `NONE` | 是否生成同名 Java caller |
-| `jvm.directImplementation.projection` | `NONE` | Java 是否可直接实现 canonical 接口的同步投影 |
+| `jvm.directImplementation.projection` | `NONE` | Java 是否可直接实现 canonical 接口的所选 projection |
 | `jvm.directImplementation.enforcement` | `GUARDED_DEFAULT` | 使用运行时守卫默认桥或 strict 抽象契约 |
 | `jvm.directImplementation.uninstrumentedKotlin` | `WARNING` | 无插件 Kotlin 子类的 opt-in 级别 |
 | `jvm.blocking.exports.enabled` | `true` | suspend 实现是否导出 Blocking caller |
 | `jvm.blocking.exports.emitNamedCaller` | `true` | 是否生成 `fooBlocking` caller |
 | `jvm.blocking.imports.enabled` | `true` | 是否生成 `ViaBlocking` 实现契约 |
+| `jvm.completionStage.exports.enabled` | `true` | 是否生成 `fooCompletionStage` caller |
+| `jvm.completionStage.exports.emitNamedCaller` | `true` | 是否保留 `fooCompletionStage` caller |
+| `jvm.completionStage.imports.enabled` | `true` | 是否生成 `ViaCompletionStage` |
+| `jvm.completableFuture.exports.enabled` | `true` | 是否生成 `fooCompletableFuture` caller |
+| `jvm.completableFuture.exports.emitNamedCaller` | `true` | 是否保留 `fooCompletableFuture` caller |
+| `jvm.completableFuture.imports.enabled` | `true` | 是否生成 `ViaCompletableFuture` |
+| `jvm.future.exports.enabled` | `true` | 是否生成 `fooFuture` caller |
+| `jvm.future.exports.emitNamedCaller` | `true` | 是否保留 `fooFuture` caller |
+| `jvm.future.imports.enabled` | `true` | 是否生成 `ViaFuture` |
 | `jvm.runtimeGuards.compatibility` | `true` | 是否写入生成代码版本检查 |
 | `jvm.runtimeGuards.invalidPath` | `true` | 是否写入无效递归路径检查 |
 | `dependencies.automatic` | `true` | 是否自动加入 annotations/runtime 依赖 |
@@ -103,7 +124,9 @@ suspendProjection {
 }
 ```
 
-等价于启用 Blocking 同名 caller、Blocking direct implementation 和 Blocking imports，关闭额外的命名 caller，并设置：
+`COMPLETION_STAGE`、`COMPLETABLE_FUTURE` 和 `FUTURE` 也可以作为 primary projection。
+
+`primary(X)` 会启用 X 的同名 caller、direct implementation 和 imports，并关闭 X 的额外命名 caller。例如 `primary(BLOCKING)` 还会设置：
 
 ```kotlin
 directImplementation {
@@ -117,14 +140,14 @@ directImplementation {
 
 ## Direct implementation 的权衡
 
-`STRICT` 让 Java 漏实现投影方法时直接编译失败，是 `primary(BLOCKING)` 的默认策略。它也带来以下约束：
+`STRICT` 让 Java 漏实现投影方法时直接编译失败，是所有 `primary(...)` 预设的默认策略。它也带来以下约束：
 
 - canonical 接口新增同名同步抽象方法，属于公开 JVM ABI；
 - Java 的多接口继承、已有同名方法和泛型擦除可能产生冲突；
 - 受插件处理的 Kotlin 实现会自动 opt-in 并生成同步桥；
 - 无插件 Kotlin 实现默认被 ERROR 级 `@SubclassOptInRequired` 阻止；
 - 手工 opt-in 只是显式承担风险，不会替代 bridge 生成；
-- 零插件 Kotlin 实现方应实现 `Foo.Projections.ViaBlocking`，或避免 direct implementation。
+- 零插件实现方应实现明确的 `Foo.Projections.ViaXxx`，或避免 direct implementation。
 
 需要保留双向默认桥时，可以在 `primary(...)` 后覆盖为 `GUARDED_DEFAULT`。此模式不能在 Java 编译期发现漏实现，只能在执行无效路径时抛出 `InvalidSuspendProjectionPathException`。
 
@@ -133,11 +156,12 @@ directImplementation {
 当前版本完整实现：
 
 - `GeneratedTypeLayout.NESTED_NAMESPACE`；
-- `JvmProjection.NONE` 与 `JvmProjection.BLOCKING` 策略；
+- Blocking、CompletionStage、CompletableFuture 和 Future 的 exports/imports；
+- 上述四种 projection 的 same-name caller、direct implementation 与 primary preset；
 - `BlockingExecution.DIRECT`；
 - `BlockingInterruption.THROW_CHECKED`。
 
-其他枚举值是后续 ABI 的保留名称。选择尚未实现的值会在 Gradle 配置阶段报错，避免配置看似生效但产物没有变化。
+`CONTINUATION` 和其他 layout 枚举值是后续 ABI 的保留名称。选择尚未实现的值会在 Gradle 配置阶段报错，避免配置看似生效但产物没有变化。
 
 ## 自动依赖与验证
 

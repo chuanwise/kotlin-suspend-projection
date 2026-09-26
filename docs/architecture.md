@@ -17,7 +17,7 @@ Kotlin Suspend Projection 遵循以下约束：
 | --- | --- |
 | `annotations` | 生成声明 metadata，以及直接实现策略所需的 opt-in 标记 |
 | `runtime-core` | 生成代码版本范围、兼容性判断和能力常量 |
-| `runtime-jvm` | blocking 等待实现及 JVM runtime guard |
+| `runtime-jvm` | Blocking/Future 等待、CompletionStage 适配及 JVM runtime guard |
 | `compiler-plugin` | K2 FIR/IR 声明生成、桥接方法与 metadata 注入 |
 | `verification-jvm` | 使用 ASM 校验生成 metadata 和 strict 实现契约 |
 | `gradle-plugin` | 编译器插件接入、依赖配置和验证任务 |
@@ -27,6 +27,7 @@ Kotlin Suspend Projection 遵循以下约束：
 给定：
 
 ```kotlin
+@SuspendProjection
 interface Repository<T : Any> {
     suspend fun find(id: String): T?
 }
@@ -38,10 +39,14 @@ interface Repository<T : Any> {
 Repository<T>
 ├── suspend find(String): T?
 ├── findBlocking(String): T?            默认 Java blocking caller
+├── findCompletionStage(String): CompletionStage<T?>
+├── findCompletableFuture(String): CompletableFuture<T?>
+├── findFuture(String): Future<T?>
 └── Projections
-    └── ViaBlocking<T> : Repository<T>
-        ├── findBlocking(String): T?     Java 实现契约
-        └── suspend find(String): T?     默认导入桥
+    ├── ViaBlocking<T>
+    ├── ViaCompletionStage<T>
+    ├── ViaCompletableFuture<T>
+    └── ViaFuture<T>
 ```
 
 实际 JVM 描述符会遵循 Kotlin 的类型擦除、value class lowering 和 context/extension receiver lowering 规则。
@@ -50,19 +55,23 @@ Repository<T>
 
 ### Kotlin 实现导出到 Java
 
-默认生成的 `xxxBlocking` 方法调用 `awaitSuspendProjection`，后者启动 canonical suspend 方法并阻塞等待结果。启用 `primary(BLOCKING)` 后，caller 改为与 canonical 方法同名。原始 lowered suspend 方法默认标记为 `@JvmSynthetic`，普通 Java 源码只看到适合调用的投影。
+Blocking exports 调用 `awaitSuspendProjection`，启动 canonical suspend 方法并阻塞等待结果。CompletionStage、CompletableFuture 和 Future exports 启动同一个 canonical suspend 方法，并以相应 JDK 类型交付结果。启用 `primary(...)` 后，所选 projection 的 caller 改为与 canonical 方法同名。原始 lowered suspend 方法默认标记为 `@JvmSynthetic`，普通 Java 源码只看到适合调用的投影。
 
 基础 runtime 不依赖 `kotlinx.coroutines`。线程中断会终止等待并抛出 `InterruptedException`，但不会取消已经启动的底层协程，因此 capability 记录为 `waiter-interruption-only`。
 
-### Java blocking 实现导入到 Kotlin
+CompletionStage/CompletableFuture exports 通过 coroutine completion 完成返回值。调用方取消返回的 CompletableFuture 不会自动取消底层 coroutine；该边界是当前 runtime 的显式语义。
+
+### Java/JVM 实现导入到 Kotlin
 
 Java 类实现 `Foo.Projections.ViaBlocking` 的 `xxxBlocking` 方法。生成的默认 suspend 方法把 canonical 调用转发给 blocking 实现，因此 Kotlin 调用方仍只依赖 `Foo`。
+
+`ViaCompletionStage` 和 `ViaCompletableFuture` 使用 completion callback 恢复 coroutine，不调用 `get()` 或 `join()`。普通 `Future` 没有标准 completion callback，因此 `ViaFuture` 的 imports 使用 `Future.get()`，其等待和中断语义会明确记录在 metadata 中。
 
 ## 直接实现策略
 
 ### `GUARDED_DEFAULT`
 
-仅在启用 Blocking direct implementation 后适用。接口上的 canonical suspend 方法和同步方法都有互相桥接能力，因此 Java 可以直接实现同步一侧。
+启用任一 direct implementation 后适用。接口上的 canonical suspend 方法和 projected 方法都有互相桥接能力，因此 Java 可以直接实现所选 projection。
 
 如果实现类两侧都没有实现，默认桥会形成递归调用。生成的 path guard 会在同一路径重入时抛出 `InvalidSuspendProjectionPathException`。
 
@@ -78,7 +87,7 @@ direct implementation 方法成为抽象契约。编译器为受插件处理的 
 
 默认的 `SelectionMode.ANNOTATED` 只处理带 `@SuspendProjection` 的接口或函数。`SelectionMode.ALL` 是显式的全量 opt-in。
 
-当前布局是 `Foo.<namespace>.ViaBlocking`，其中 namespace 默认是 `Projections`，可以配置为其他合法 JVM 标识符。其他布局枚举尚未实现，配置阶段会明确拒绝。
+当前布局是 `Foo.<namespace>.ViaXxx`，其中 namespace 默认是 `Projections`，可以配置为其他合法 JVM 标识符。其他布局枚举尚未实现，配置阶段会明确拒绝。
 
 ## Metadata
 
