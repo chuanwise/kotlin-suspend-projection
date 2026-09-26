@@ -50,7 +50,7 @@ public enum class BlockingInterruption(internal val compilerValue: String) {
 }
 
 public class SelectionConfiguration {
-    public var mode: SelectionMode = SelectionMode.ALL
+    public var mode: SelectionMode = SelectionMode.ANNOTATED
 }
 
 public class GeneratedTypesConfiguration {
@@ -157,6 +157,8 @@ public open class SuspendProjectionExtension {
         }
         jvm.sameNameCaller = projection
         jvm.directImplementation.projection = projection
+        jvm.directImplementation.enforcement = DirectImplementationEnforcement.STRICT
+        jvm.directImplementation.uninstrumentedKotlin = UninstrumentedKotlin.ERROR
         jvm.blocking.exports.enabled = true
         jvm.blocking.exports.emitNamedCaller = false
         jvm.blocking.imports.enabled = true

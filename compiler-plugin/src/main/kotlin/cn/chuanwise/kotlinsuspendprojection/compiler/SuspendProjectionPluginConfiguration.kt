@@ -87,7 +87,7 @@ internal fun CompilerConfiguration.suspendProjectionConfiguration():
     SuspendProjectionPluginConfiguration = SuspendProjectionPluginConfiguration(
         selectionMode = enumValue(
             SuspendProjectionConfigurationKeys.SELECTION_MODE,
-            SelectionMode.ALL,
+            SelectionMode.ANNOTATED,
         ),
         generatedTypesNamespace =
             this[SuspendProjectionConfigurationKeys.GENERATED_TYPES_NAMESPACE] ?: "Projections",

@@ -60,13 +60,21 @@ class SuspendProjectionGradlePluginTest {
         assertFalse(hasEntry(jar, "sample/ProtectedOwner\$Interop.class"))
         assertTrue(hasEntry(jar, "sample/JavaDirectOwner.class"))
         assertTrue(projectionMethods.contains("echoBlocking"))
+        assertTrue(projectionMethods.contains("echo"))
         assertTrue(projectionMethods.contains("mapBlocking"))
+        assertTrue(projectionMethods.contains("map"))
         assertTrue(projectionMethods.contains("decorateBlocking"))
+        assertTrue(projectionMethods.contains("decorate"))
         assertTrue(projectionMethods.contains("contextualBlocking"))
+        assertTrue(projectionMethods.contains("contextual"))
         assertTrue(projectionMethods.contains("roundTripBlocking"))
+        assertTrue(projectionMethods.contains("roundTrip"))
         assertTrue(projectionMethods.contains("nullableRoundTripBlocking"))
+        assertTrue(projectionMethods.contains("nullableRoundTrip"))
         assertTrue(projectionMethods.contains("tokenRoundTripBlocking"))
+        assertTrue(projectionMethods.contains("tokenRoundTrip"))
         assertTrue(projectionMethods.contains("decorateUserBlocking"))
+        assertTrue(projectionMethods.contains("decorateUser"))
         assertTrue(ownerMethods.contains("roundTrip"))
         assertTrue(ownerMethods.contains("nullableRoundTrip"))
         assertTrue(ownerMethods.contains("tokenRoundTrip"))
@@ -77,7 +85,7 @@ class SuspendProjectionGradlePluginTest {
                 ["Lkotlin/SubclassOptInRequired;"]
                 ?.contains(
                     "Lcn/chuanwise/kotlinsuspendprojection/annotations/" +
-                        "UninstrumentedProjectionImplementationWarning;",
+                        "UninstrumentedProjectionImplementationError;",
                 ) == true,
         )
         assertTrue(
@@ -89,6 +97,26 @@ class SuspendProjectionGradlePluginTest {
                     }
                 },
         )
+    }
+
+    @Test
+    fun `blocking primary rejects incomplete Java direct implementation`() {
+        val projectDir = Files.createTempDirectory("suspend-projection-strict-test")
+        val repository = projectDir.resolve("repository").createDirectories()
+        installProjectArtifacts(repository)
+        writeStrictFailureProject(projectDir, repository)
+
+        val result = GradleRunner.create()
+            .withProjectDir(projectDir.toFile())
+            .withTestKitDir(
+                Path.of(checkNotNull(System.getProperty("suspendProjection.testKitDir"))).toFile(),
+            )
+            .withArguments("clean", "compileJava", "--stacktrace")
+            .buildAndFail()
+
+        assertTrue(result.task(":compileKotlin")?.outcome == TaskOutcome.SUCCESS)
+        assertTrue(result.task(":compileJava")?.outcome == TaskOutcome.FAILED)
+        assertTrue(result.output.contains("second"))
     }
 
     private fun installProjectArtifacts(repository: Path) {
@@ -147,9 +175,6 @@ class SuspendProjectionGradlePluginTest {
 
             extensions.configure<cn.chuanwise.kotlinsuspendprojection.gradle.SuspendProjectionExtension> {
                 enabled = true
-                selection {
-                    mode = cn.chuanwise.kotlinsuspendprojection.gradle.SelectionMode.ANNOTATED
-                }
                 generatedTypes {
                     layout = cn.chuanwise.kotlinsuspendprojection.gradle.GeneratedTypeLayout.NESTED_NAMESPACE
                     namespace = "Interop"
@@ -157,10 +182,6 @@ class SuspendProjectionGradlePluginTest {
                 primary(cn.chuanwise.kotlinsuspendprojection.gradle.JvmProjection.BLOCKING)
                 jvm {
                     rawSuspendAbi = cn.chuanwise.kotlinsuspendprojection.gradle.RawSuspendAbi.HIDDEN
-                    directImplementation {
-                        enforcement = cn.chuanwise.kotlinsuspendprojection.gradle.DirectImplementationEnforcement.GUARDED_DEFAULT
-                        uninstrumentedKotlin = cn.chuanwise.kotlinsuspendprojection.gradle.UninstrumentedKotlin.WARNING
-                    }
                     blocking {
                         exports {
                             enabled = true
@@ -298,6 +319,70 @@ class SuspendProjectionGradlePluginTest {
                     @Override public String nullableRoundTrip(String value) { return value; }
                     @Override public int tokenRoundTrip(int value) { return value; }
                     @Override public String decorateUser(String receiver) { return receiver; }
+                }
+                """.trimIndent(),
+            )
+        }
+    }
+
+    private fun writeStrictFailureProject(projectDir: Path, repository: Path) {
+        val root = Path.of(checkNotNull(System.getProperty("suspendProjection.repoRoot")))
+        val repositoryUri = repository.toUri().toASCIIString()
+        val kotlinVersion = checkNotNull(System.getProperty("suspendProjection.kotlinVersion"))
+        val pluginJar = root.resolve("gradle-plugin/build/libs/gradle-plugin.jar")
+            .toUri()
+            .toASCIIString()
+        projectDir.resolve("settings.gradle.kts").writeText(
+            """
+            pluginManagement { repositories { gradlePluginPortal(); mavenCentral() } }
+            dependencyResolutionManagement {
+                repositories { maven { url = uri("$repositoryUri") }; mavenCentral() }
+            }
+            rootProject.name = "strict-failure"
+            """.trimIndent(),
+        )
+        projectDir.resolve("build.gradle.kts").writeText(
+            """
+            buildscript {
+                repositories { mavenCentral(); gradlePluginPortal() }
+                dependencies {
+                    classpath("org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlinVersion")
+                    classpath(files(uri("$pluginJar")))
+                }
+            }
+
+            apply(plugin = "org.jetbrains.kotlin.jvm")
+            apply(plugin = "cn.chuanwise.kotlinsuspendprojection")
+
+            extensions.configure<cn.chuanwise.kotlinsuspendprojection.gradle.SuspendProjectionExtension> {
+                primary(cn.chuanwise.kotlinsuspendprojection.gradle.JvmProjection.BLOCKING)
+            }
+            """.trimIndent(),
+        )
+        projectDir.resolve("src/main/kotlin/sample/RequiredApi.kt").apply {
+            parent.createDirectories()
+            writeText(
+                """
+                package sample
+
+                import cn.chuanwise.kotlinsuspendprojection.annotations.SuspendProjection
+
+                @SuspendProjection
+                interface RequiredApi {
+                    suspend fun first(value: String): String
+                    suspend fun second(value: String): String
+                }
+                """.trimIndent(),
+            )
+        }
+        projectDir.resolve("src/main/java/sample/IncompleteJavaApi.java").apply {
+            parent.createDirectories()
+            writeText(
+                """
+                package sample;
+
+                public final class IncompleteJavaApi implements RequiredApi {
+                    @Override public String first(String value) { return value; }
                 }
                 """.trimIndent(),
             )

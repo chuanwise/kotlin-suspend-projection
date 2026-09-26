@@ -15,10 +15,6 @@ class SuspendProjectionExtensionTest {
             generatedTypes { namespace = "Interop" }
             primary(JvmProjection.BLOCKING)
             jvm {
-                directImplementation {
-                    enforcement = DirectImplementationEnforcement.STRICT
-                    uninstrumentedKotlin = UninstrumentedKotlin.ERROR
-                }
                 runtimeGuards {
                     compatibility = false
                     invalidPath = false
@@ -52,7 +48,7 @@ class SuspendProjectionExtensionTest {
         extension.validate()
 
         assertTrue(extension.enabled)
-        assertEquals(SelectionMode.ALL, extension.selection.mode)
+        assertEquals(SelectionMode.ANNOTATED, extension.selection.mode)
         assertEquals("Projections", extension.generatedTypes.namespace)
         assertEquals(JvmProjection.NONE, extension.jvm.sameNameCaller)
         assertEquals(JvmProjection.NONE, extension.jvm.directImplementation.projection)

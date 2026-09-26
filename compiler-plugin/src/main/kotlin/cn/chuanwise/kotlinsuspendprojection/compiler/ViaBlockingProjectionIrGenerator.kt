@@ -61,10 +61,102 @@ internal class ViaBlockingProjectionIrGenerator(
     private fun visitClass(owner: IrClass) {
         if (owner.isGeneratedViaBlocking()) {
             fillImportBodies(owner)
+            fillStrictDirectImplementationDefaults(owner)
         } else if (owner.isInterface) {
             materializeMissingProjections(owner)
         }
         owner.declarations.filterIsInstance<IrClass>().forEach(::visitClass)
+    }
+
+    private fun fillStrictDirectImplementationDefaults(owner: IrClass) {
+        if (configuration.directImplementation != JvmProjection.BLOCKING) return
+        if (configuration.sameNameCaller != JvmProjection.BLOCKING) return
+        if (
+            configuration.directImplementationEnforcement !=
+            DirectImplementationEnforcement.STRICT
+        ) {
+            return
+        }
+
+        val canonicalOwner = ((owner.parent as IrClass).parent as IrClass)
+        owner.declarations.filterIsInstance<IrSimpleFunction>()
+            .filter { it.isSuspend && it.isGeneratedByProjectionPlugin() }
+            .forEach { canonical ->
+                val original = canonical.overriddenSymbols.singleOrNull()?.owner
+                    ?: error("Generated ViaBlocking method has no canonical override")
+                val direct = canonicalOwner.declarations.filterIsInstance<IrSimpleFunction>()
+                    .singleOrNull { candidate ->
+                        !candidate.isSuspend &&
+                            candidate.name == original.name &&
+                            normalizedRegularParameterTypes(candidate) ==
+                            normalizedRegularParameterTypes(original)
+                    }
+                    ?: error("No strict direct projection matches ${original.render()}")
+                val blocking = owner.declarations.filterIsInstance<IrSimpleFunction>()
+                    .singleOrNull { candidate ->
+                        !candidate.isSuspend &&
+                            candidate.name == Name.identifier(canonical.name.asString() + "Blocking") &&
+                            normalizedRegularParameterTypes(candidate) ==
+                            normalizedRegularParameterTypes(canonical)
+                    }
+                    ?: error("No ViaBlocking method matches ${canonical.render()}")
+
+                owner.declarations += createDirectImplementationDefault(owner, blocking, direct)
+            }
+    }
+
+    private fun createDirectImplementationDefault(
+        owner: IrClass,
+        blocking: IrSimpleFunction,
+        direct: IrSimpleFunction,
+    ): IrSimpleFunction = pluginContext.irFactory.buildFun {
+        startOffset = SYNTHETIC_OFFSET
+        endOffset = SYNTHETIC_OFFSET
+        origin = IrDeclarationOrigin.GeneratedByPlugin(SuspendProjectionGeneratedDeclarationKey)
+        name = direct.name
+        returnType = blocking.returnType
+        modality = Modality.OPEN
+        visibility = DescriptorVisibilities.PUBLIC
+        isSuspend = false
+    }.apply bridge@{
+        parent = owner
+        val copiedTypeParameters = blocking.typeParameters.map { source ->
+            addTypeParameter {
+                name = source.name
+                variance = source.variance
+                isReified = source.isReified
+            }
+        }
+        val substitutor = IrTypeSubstitutor(
+            owner.typeParameters.map { it.symbol } + blocking.typeParameters.map { it.symbol },
+            owner.typeParameters.map { it.typeParameterDefaultType } +
+                copiedTypeParameters.map { it.typeParameterDefaultType },
+        )
+        blocking.typeParameters.zip(copiedTypeParameters).forEach { (source, copied) ->
+            copied.superTypes = source.superTypes.map(substitutor::substitute)
+        }
+        returnType = substitutor.substitute(blocking.returnType)
+        parameters = blocking.parameters.map { parameter ->
+            parameter.copyTo(this@bridge).apply {
+                type = substitutor.substitute(parameter.type)
+            }
+        }
+        overriddenSymbols = listOf(direct.symbol)
+        body = DeclarationIrBuilder(pluginContext, symbol).irBlockBody {
+            +irReturn(
+                irCall(blocking.symbol).apply {
+                    copiedTypeParameters.forEachIndexed { index, typeParameter ->
+                        typeArguments[index] = typeParameter.typeParameterDefaultType
+                    }
+                    this@bridge.parameters.forEachIndexed { index, parameter ->
+                        arguments[index] = irGet(parameter)
+                    }
+                },
+            )
+        }
+        if (blocking.usesValueClassInSignature()) {
+            addJvmName(this, direct.name.asString())
+        }
     }
 
     private fun materializeMissingProjections(owner: IrClass) {

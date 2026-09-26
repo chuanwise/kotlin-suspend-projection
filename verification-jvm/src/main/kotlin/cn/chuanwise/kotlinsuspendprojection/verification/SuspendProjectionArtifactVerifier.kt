@@ -208,10 +208,33 @@ private class ClassRepository {
         owner.methods[key]?.let {
             if (!it.isAbstract && !it.isStatic) return MethodResolution.FOUND
         }
-        val superName = owner.superName ?: return MethodResolution.MISSING
-        if (superName == "java/lang/Object") return MethodResolution.MISSING
-        val superInfo = classes[superName] ?: return MethodResolution.UNRESOLVED
-        return findConcreteMethod(superInfo, key, visited)
+        var unresolved = false
+        owner.interfaces.forEach { interfaceName ->
+            val interfaceInfo = classes[interfaceName]
+            if (interfaceInfo == null) {
+                unresolved = true
+            } else {
+                when (findConcreteMethod(interfaceInfo, key, visited)) {
+                    MethodResolution.FOUND -> return MethodResolution.FOUND
+                    MethodResolution.UNRESOLVED -> unresolved = true
+                    MethodResolution.MISSING -> Unit
+                }
+            }
+        }
+        val superName = owner.superName
+        if (superName != null && superName != "java/lang/Object") {
+            val superInfo = classes[superName]
+            if (superInfo == null) {
+                unresolved = true
+            } else {
+                when (findConcreteMethod(superInfo, key, visited)) {
+                    MethodResolution.FOUND -> return MethodResolution.FOUND
+                    MethodResolution.UNRESOLVED -> unresolved = true
+                    MethodResolution.MISSING -> Unit
+                }
+            }
+        }
+        return if (unresolved) MethodResolution.UNRESOLVED else MethodResolution.MISSING
     }
 
     private fun readClass(input: InputStream, subject: Boolean) {
