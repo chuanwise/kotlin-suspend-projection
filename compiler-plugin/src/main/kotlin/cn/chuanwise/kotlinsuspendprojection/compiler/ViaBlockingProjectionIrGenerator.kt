@@ -55,10 +55,6 @@ internal class ViaBlockingProjectionIrGenerator(
     private val projectionMetaClassId = ClassId.topLevel(
         FqName("cn.chuanwise.kotlinsuspendprojection.annotations.SuspendProjectionMeta"),
     )
-    private val suspendProjectionClassId = ClassId.topLevel(
-        FqName("cn.chuanwise.kotlinsuspendprojection.annotations.SuspendProjection"),
-    )
-
     fun generate(module: IrModuleFragment) {
         module.files.forEach { file ->
             file.declarations.filterIsInstance<IrClass>().forEach(::visitClass)
@@ -90,6 +86,10 @@ internal class ViaBlockingProjectionIrGenerator(
             .forEach { canonical ->
                 val original = canonical.overriddenSymbols.singleOrNull()?.owner
                     ?: error("Generated ${projection.viaTypeName} method has no canonical override")
+                if (
+                    directProjection !in
+                    original.projectionPolicy(canonicalOwner, configuration).imports
+                ) return@forEach
                 val direct = canonicalOwner.declarations.filterIsInstance<IrSimpleFunction>()
                     .singleOrNull { candidate ->
                         !candidate.isSuspend &&
@@ -188,9 +188,14 @@ internal class ViaBlockingProjectionIrGenerator(
             configuration.generatedTypesNamespace,
             listOf(pluginContext.irBuiltIns.anyType),
         )
-        configuration.enabledImports.forEach { projection ->
+        val requiredProjections = originals.flatMapTo(linkedSetOf()) { original ->
+            original.projectionPolicy(owner, configuration).imports
+        }
+        requiredProjections.forEach { projection ->
             val via = buildGeneratedViaInterface(namespace, owner, projection)
-            originals.forEach { original ->
+            originals.filter { original ->
+                projection in original.projectionPolicy(owner, configuration).imports
+            }.forEach { original ->
                 val projected = buildProjectedFunction(
                     via,
                     original,
@@ -494,7 +499,9 @@ internal class ViaBlockingProjectionIrGenerator(
 
     private fun IrClass.generatedProjection(): JvmProjection? {
         if (!isGeneratedByProjectionPlugin()) return null
-        return configuration.enabledImports.singleOrNull { it.viaTypeName == name.asString() }
+        return JvmProjection.entries.singleOrNull {
+            it != JvmProjection.NONE && it.viaTypeName == name.asString()
+        }
     }
 
     private fun IrDeclaration.isGeneratedByProjectionPlugin(): Boolean =
@@ -503,7 +510,9 @@ internal class ViaBlockingProjectionIrGenerator(
 
     private fun eligibleSuspendFunctions(owner: IrClass): List<IrSimpleFunction> =
         owner.declarations.filterIsInstance<IrSimpleFunction>().filter {
-            it.isSuspend && it.visibility == DescriptorVisibilities.PUBLIC && it.isSelected(owner)
+            it.isSuspend &&
+                it.visibility == DescriptorVisibilities.PUBLIC &&
+                it.isProjectionSelected(owner, configuration)
         }
 
     private fun normalizedRegularParameterTypes(function: IrSimpleFunction): List<String> {
@@ -558,11 +567,6 @@ internal class ViaBlockingProjectionIrGenerator(
         canonical.annotations += DeclarationIrBuilder(pluginContext, canonical.symbol)
             .irAnnotation(annotationClass.constructors.single())
     }
-
-    private fun IrSimpleFunction.isSelected(owner: IrClass): Boolean =
-        configuration.selectionMode == SelectionMode.ALL ||
-            annotations.hasAnnotation(suspendProjectionClassId.asSingleFqName()) ||
-            owner.annotations.hasAnnotation(suspendProjectionClassId.asSingleFqName())
 
     private fun addGeneratedMetadata(
         owner: IrClass,

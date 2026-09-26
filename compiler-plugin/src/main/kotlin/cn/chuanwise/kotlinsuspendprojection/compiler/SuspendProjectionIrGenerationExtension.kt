@@ -8,11 +8,7 @@ internal class SuspendProjectionIrGenerationExtension(
     private val configuration: SuspendProjectionPluginConfiguration,
 ) : IrGenerationExtension {
     override fun generate(moduleFragment: IrModuleFragment, pluginContext: IrPluginContext) {
-        if (configuration.hasOwnerSurface) {
-            SameNameBlockingProjectionGenerator(pluginContext, configuration).generate(moduleFragment)
-        }
-        if (configuration.enabledImports.isNotEmpty()) {
-            ViaBlockingProjectionIrGenerator(pluginContext, configuration).generate(moduleFragment)
-        }
+        SameNameBlockingProjectionGenerator(pluginContext, configuration).generate(moduleFragment)
+        ViaBlockingProjectionIrGenerator(pluginContext, configuration).generate(moduleFragment)
     }
 }

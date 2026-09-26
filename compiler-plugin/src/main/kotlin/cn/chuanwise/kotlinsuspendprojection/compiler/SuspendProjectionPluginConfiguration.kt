@@ -157,44 +157,44 @@ internal fun CompilerConfiguration.suspendProjectionConfiguration():
         ),
         sameNameCaller = enumValue(
             SuspendProjectionConfigurationKeys.SAME_NAME_CALLER,
-            JvmProjection.NONE,
+            JvmProjection.BLOCKING,
         ),
         directImplementation = enumValue(
             SuspendProjectionConfigurationKeys.DIRECT_IMPLEMENTATION,
-            JvmProjection.NONE,
+            JvmProjection.BLOCKING,
         ),
         directImplementationEnforcement = enumValue(
             SuspendProjectionConfigurationKeys.DIRECT_IMPLEMENTATION_ENFORCEMENT,
-            DirectImplementationEnforcement.GUARDED_DEFAULT,
+            DirectImplementationEnforcement.STRICT,
         ),
         uninstrumentedKotlin = enumValue(
             SuspendProjectionConfigurationKeys.UNINSTRUMENTED_KOTLIN,
-            UninstrumentedKotlin.WARNING,
+            UninstrumentedKotlin.ERROR,
         ),
         blockingExportsEnabled =
             this[SuspendProjectionConfigurationKeys.BLOCKING_EXPORTS_ENABLED] ?: true,
         blockingEmitNamedCaller =
-            this[SuspendProjectionConfigurationKeys.BLOCKING_EMIT_NAMED_CALLER] ?: true,
+            this[SuspendProjectionConfigurationKeys.BLOCKING_EMIT_NAMED_CALLER] ?: false,
         blockingImportsEnabled =
             this[SuspendProjectionConfigurationKeys.BLOCKING_IMPORTS_ENABLED] ?: true,
         completionStageExportsEnabled =
-            this[SuspendProjectionConfigurationKeys.COMPLETION_STAGE_EXPORTS_ENABLED] ?: true,
+            this[SuspendProjectionConfigurationKeys.COMPLETION_STAGE_EXPORTS_ENABLED] ?: false,
         completionStageEmitNamedCaller =
             this[SuspendProjectionConfigurationKeys.COMPLETION_STAGE_EMIT_NAMED_CALLER] ?: true,
         completionStageImportsEnabled =
-            this[SuspendProjectionConfigurationKeys.COMPLETION_STAGE_IMPORTS_ENABLED] ?: true,
+            this[SuspendProjectionConfigurationKeys.COMPLETION_STAGE_IMPORTS_ENABLED] ?: false,
         completableFutureExportsEnabled =
-            this[SuspendProjectionConfigurationKeys.COMPLETABLE_FUTURE_EXPORTS_ENABLED] ?: true,
+            this[SuspendProjectionConfigurationKeys.COMPLETABLE_FUTURE_EXPORTS_ENABLED] ?: false,
         completableFutureEmitNamedCaller =
             this[SuspendProjectionConfigurationKeys.COMPLETABLE_FUTURE_EMIT_NAMED_CALLER] ?: true,
         completableFutureImportsEnabled =
-            this[SuspendProjectionConfigurationKeys.COMPLETABLE_FUTURE_IMPORTS_ENABLED] ?: true,
+            this[SuspendProjectionConfigurationKeys.COMPLETABLE_FUTURE_IMPORTS_ENABLED] ?: false,
         futureExportsEnabled =
-            this[SuspendProjectionConfigurationKeys.FUTURE_EXPORTS_ENABLED] ?: true,
+            this[SuspendProjectionConfigurationKeys.FUTURE_EXPORTS_ENABLED] ?: false,
         futureEmitNamedCaller =
             this[SuspendProjectionConfigurationKeys.FUTURE_EMIT_NAMED_CALLER] ?: true,
         futureImportsEnabled =
-            this[SuspendProjectionConfigurationKeys.FUTURE_IMPORTS_ENABLED] ?: true,
+            this[SuspendProjectionConfigurationKeys.FUTURE_IMPORTS_ENABLED] ?: false,
         emitCompatibilityGuard =
             this[SuspendProjectionConfigurationKeys.EMIT_COMPATIBILITY_GUARD] ?: true,
         emitInvalidPathGuard =

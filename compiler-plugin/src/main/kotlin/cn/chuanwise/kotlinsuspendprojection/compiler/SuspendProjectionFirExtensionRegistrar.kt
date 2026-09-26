@@ -10,16 +10,23 @@ import org.jetbrains.kotlin.fir.extensions.FirDeclarationGenerationExtension
 import org.jetbrains.kotlin.fir.extensions.FirExtensionRegistrar
 import org.jetbrains.kotlin.fir.extensions.MemberGenerationContext
 import org.jetbrains.kotlin.fir.extensions.NestedClassGenerationContext
+import org.jetbrains.kotlin.fir.expressions.FirAnnotation
+import org.jetbrains.kotlin.fir.expressions.FirLiteralExpression
+import org.jetbrains.kotlin.fir.expressions.FirPropertyAccessExpression
+import org.jetbrains.kotlin.fir.expressions.FirVarargArgumentsExpression
 import org.jetbrains.kotlin.fir.plugin.createMemberFunction
 import org.jetbrains.kotlin.fir.plugin.createNestedClass
 import org.jetbrains.kotlin.fir.resolve.defaultType
+import org.jetbrains.kotlin.fir.resolve.providers.firProvider
 import org.jetbrains.kotlin.fir.resolve.providers.symbolProvider
 import org.jetbrains.kotlin.fir.resolve.substitution.ConeSubstitutorByMap
 import org.jetbrains.kotlin.fir.symbols.FirBasedSymbol
 import org.jetbrains.kotlin.fir.symbols.SymbolInternals
 import org.jetbrains.kotlin.fir.symbols.impl.FirClassLikeSymbol
 import org.jetbrains.kotlin.fir.symbols.impl.FirClassSymbol
+import org.jetbrains.kotlin.fir.symbols.impl.FirEnumEntrySymbol
 import org.jetbrains.kotlin.fir.symbols.impl.FirNamedFunctionSymbol
+import org.jetbrains.kotlin.fir.references.FirResolvedNamedReference
 import org.jetbrains.kotlin.fir.types.ConeKotlinType
 import org.jetbrains.kotlin.fir.types.classId
 import org.jetbrains.kotlin.fir.types.coneType
@@ -51,10 +58,12 @@ internal class SuspendProjectionFirDeclarationGenerator(
         classSymbol: FirClassSymbol<*>,
         context: NestedClassGenerationContext,
     ): Set<Name> = when {
-        configuration.enabledImports.isNotEmpty() && classSymbol.isEligibleProjectionOwner() ->
+        classSymbol.requiredImportProjections().isNotEmpty() && classSymbol.isEligibleProjectionOwner() ->
             setOf(projectionsName)
         classSymbol.isGeneratedProjectionsNamespace() ->
-            configuration.enabledImports.mapTo(linkedSetOf()) { it.viaName() }
+            canonicalOwner(classSymbol)?.requiredImportProjections()
+                .orEmpty()
+                .mapTo(linkedSetOf()) { it.viaName() }
         else -> emptySet()
     }
 
@@ -73,9 +82,11 @@ internal class SuspendProjectionFirDeclarationGenerator(
                 modality = Modality.ABSTRACT
             }.symbol
 
-        owner.isGeneratedProjectionsNamespace() &&
-            configuration.enabledImports.any { it.viaName() == name } -> {
+        owner.isGeneratedProjectionsNamespace() -> {
             val canonicalOwner = canonicalOwner(owner) ?: return null
+            val projection = JvmProjection.entries.singleOrNull { it != JvmProjection.NONE && it.viaName() == name }
+                ?: return null
+            if (projection !in canonicalOwner.requiredImportProjections()) return null
             val canonicalTypeParameters = canonicalOwner.fir.typeParameters.map { it.symbol }
             createNestedClass(
                 owner,
@@ -218,7 +229,9 @@ internal class SuspendProjectionFirDeclarationGenerator(
 
     private fun FirClassSymbol<*>.generatedProjection(): JvmProjection? {
         if (classId.outerClassId?.shortClassName != projectionsName) return null
-        return configuration.enabledImports.singleOrNull { it.viaName() == name }
+        return JvmProjection.entries.singleOrNull {
+            it != JvmProjection.NONE && it.viaName() == name
+        }
     }
 
     private fun canonicalOwner(symbol: FirClassSymbol<*>): FirClassSymbol<*>? {
@@ -230,25 +243,80 @@ internal class SuspendProjectionFirDeclarationGenerator(
     @OptIn(DirectDeclarationsAccess::class)
     private fun canonicalFunctions(symbol: FirClassSymbol<*>): List<FirNamedFunctionSymbol> {
         val canonical = if (symbol.generatedProjection() != null) canonicalOwner(symbol) else symbol
+        val projection = symbol.generatedProjection()
         return canonical?.declarationSymbols
             ?.filterIsInstance<FirNamedFunctionSymbol>()
             ?.filter { function ->
                 function.rawStatus.isSuspend &&
                     function.rawStatus.visibility == Visibilities.Public &&
-                    function.isSelected(canonical)
+                    function.isSelected(canonical) &&
+                    (projection == null || projection in function.projectionPolicy(canonical).imports)
             }
             .orEmpty()
     }
 
     private fun FirNamedFunctionSymbol.isSelected(owner: FirClassSymbol<*>): Boolean =
-        configuration.selectionMode == SelectionMode.ALL ||
-            hasSuspendProjectionAnnotation() ||
-            owner.hasSuspendProjectionAnnotation()
+        projectionDirective()?.enable
+            ?: owner.projectionDirective()?.enable
+            ?: owner.containingFileAnnotations().projectionDirective()?.enable
+            ?: (configuration.selectionMode == SelectionMode.ALL)
 
-    private fun FirBasedSymbol<*>.hasSuspendProjectionAnnotation(): Boolean =
-        resolvedAnnotationsWithArguments.any { annotation ->
-            annotation.annotationTypeRef.coneTypeOrNull?.classId == SUSPEND_PROJECTION_CLASS_ID
+    @OptIn(DirectDeclarationsAccess::class)
+    private fun FirClassSymbol<*>.requiredImportProjections(): Set<JvmProjection> =
+        declarationSymbols.filterIsInstance<FirNamedFunctionSymbol>()
+            .asSequence()
+            .filter { it.rawStatus.isSuspend && it.rawStatus.visibility == Visibilities.Public }
+            .filter { it.isSelected(this) }
+            .flatMap { it.projectionPolicy(this).imports.asSequence() }
+            .toCollection(linkedSetOf())
+
+    private fun FirNamedFunctionSymbol.projectionPolicy(owner: FirClassSymbol<*>): ProjectionPolicy {
+        val override = resolvedAnnotationsWithArguments.explicitProjectionOverride()
+            ?: owner.resolvedAnnotationsWithArguments.explicitProjectionOverride()
+            ?: owner.containingFileAnnotations().explicitProjectionOverride()
+        return if (override == null) {
+            ProjectionPolicy(
+                exports = configuration.enabledExports.toSet(),
+                imports = configuration.enabledImports.toSet(),
+            )
+        } else {
+            ProjectionPolicy(exports = override, imports = override)
         }
+    }
+
+    private fun FirClassSymbol<*>.containingFileAnnotations(): List<FirAnnotation> =
+        session.firProvider.getFirClassifierContainerFile(this).annotations
+
+    private data class ProjectionDirective(val enable: Boolean)
+
+    private fun FirBasedSymbol<*>.projectionDirective(): ProjectionDirective? =
+        resolvedAnnotationsWithArguments.projectionDirective()
+
+    private fun List<FirAnnotation>.projectionDirective(): ProjectionDirective? {
+        val annotation = firstOrNull { candidate ->
+            candidate.annotationTypeRef.coneTypeOrNull?.classId == SUSPEND_PROJECTION_CLASS_ID
+        } ?: return null
+        val enable = (annotation.argumentMapping.mapping[Name.identifier("enable")]
+            as? FirLiteralExpression)?.value as? Boolean
+        return ProjectionDirective(enable ?: true)
+    }
+
+    private fun List<FirAnnotation>.explicitProjectionOverride(): Set<JvmProjection>? {
+        val annotation = firstOrNull { candidate ->
+            candidate.annotationTypeRef.coneTypeOrNull?.classId == SUSPEND_PROJECTION_CLASS_ID
+        } ?: return null
+        val argument = annotation.argumentMapping.mapping[Name.identifier("projections")]
+            ?: return null
+        val arguments = (argument as? FirVarargArgumentsExpression)?.arguments ?: listOf(argument)
+        return arguments.mapNotNullTo(linkedSetOf()) { expression ->
+            val access = expression as? FirPropertyAccessExpression ?: return@mapNotNullTo null
+            val reference = access.calleeReference as? FirResolvedNamedReference
+                ?: return@mapNotNullTo null
+            val entry = reference.resolvedSymbol as? FirEnumEntrySymbol
+                ?: return@mapNotNullTo null
+            JvmProjection.entries.singleOrNull { it.name == entry.name.asString() }
+        }.takeIf(Set<JvmProjection>::isNotEmpty)
+    }
 
     private fun FirNamedFunctionSymbol.substituteType(
         type: ConeKotlinType,
@@ -314,7 +382,7 @@ internal class SuspendProjectionFirDeclarationGenerator(
 
     private companion object {
         val SUSPEND_PROJECTION_CLASS_ID: ClassId = ClassId.topLevel(
-            FqName("cn.chuanwise.kotlinsuspendprojection.annotations.SuspendProjection"),
+            FqName("cn.chuanwise.kotlinsuspendprojection.annotations.JvmSuspendProjection"),
         )
     }
 }

@@ -65,6 +65,8 @@ class SuspendProjectionGradlePluginTest {
         assertTrue(hasEntry(jar, "sample/JavaAsyncOwners\$Stage.class"))
         assertTrue(hasEntry(jar, "sample/JavaAsyncOwners\$Completable.class"))
         assertTrue(hasEntry(jar, "sample/JavaAsyncOwners\$Legacy.class"))
+        assertTrue(hasEntry(jar, "sample/FileProjected\$Interop\$ViaFuture.class"))
+        assertTrue(hasEntry(jar, "sample/DisabledAtClass\$Interop\$ViaFuture.class"))
         assertTrue(projectionMethods.contains("echoBlocking"))
         assertTrue(projectionMethods.contains("echo"))
         assertTrue(projectionMethods.contains("mapBlocking"))
@@ -87,8 +89,25 @@ class SuspendProjectionGradlePluginTest {
         assertTrue(ownerMethods.contains("echoCompletionStage"))
         assertTrue(ownerMethods.contains("echoCompletableFuture"))
         assertTrue(ownerMethods.contains("echoFuture"))
+        assertFalse(ownerMethods.contains("mapCompletionStage"))
+        assertFalse(ownerMethods.contains("mapCompletableFuture"))
+        assertFalse(ownerMethods.contains("mapFuture"))
+        val asyncOwnerMethods = readMethodNames(jar, "sample/AsyncApi.class")
+        assertTrue(asyncOwnerMethods.contains("loadCompletionStage"))
+        assertTrue(asyncOwnerMethods.contains("loadCompletableFuture"))
+        assertTrue(asyncOwnerMethods.contains("loadFuture"))
+        assertFalse(asyncOwnerMethods.contains("loadBlocking"))
+        val fileOwnerMethods = readMethodNames(jar, "sample/FileProjected.class")
+        assertTrue(fileOwnerMethods.contains("inheritedFuture"))
+        assertFalse(fileOwnerMethods.contains("inheritedBlocking"))
         assertTrue(partialProjectionMethods.contains("selectedBlocking"))
         assertFalse(partialProjectionMethods.contains("skippedBlocking"))
+        val disabledMethods = readMethodNames(
+            jar,
+            "sample/DisabledAtClass\$Interop\$ViaFuture.class",
+        )
+        assertTrue(disabledMethods.contains("reenabledFuture"))
+        assertFalse(disabledMethods.contains("disabledFuture"))
         assertTrue(
             readClassAnnotationClassValues(jar, "sample/GenericOwner.class")
                 ["Lkotlin/SubclassOptInRequired;"]
@@ -210,21 +229,21 @@ class SuspendProjectionGradlePluginTest {
             apply(plugin = "cn.chuanwise.kotlinsuspendprojection")
 
             extensions.configure<cn.chuanwise.kotlinsuspendprojection.gradle.SuspendProjectionExtension> {
-                enabled = true
+                enable = true
                 generatedTypes {
                     layout = cn.chuanwise.kotlinsuspendprojection.gradle.GeneratedTypeLayout.NESTED_NAMESPACE
                     namespace = "Interop"
                 }
-                primary(cn.chuanwise.kotlinsuspendprojection.gradle.JvmProjection.BLOCKING)
+                primary = cn.chuanwise.kotlinsuspendprojection.gradle.JvmProjection.BLOCKING
                 jvm {
                     rawSuspendAbi = cn.chuanwise.kotlinsuspendprojection.gradle.RawSuspendAbi.HIDDEN
                     blocking {
                         exports {
-                            enabled = true
+                            enable = true
                             emitNamedCaller = false
                         }
                         imports {
-                            enabled = true
+                            enable = true
                             execution = cn.chuanwise.kotlinsuspendprojection.gradle.BlockingExecution.DIRECT
                             interruption = cn.chuanwise.kotlinsuspendprojection.gradle.BlockingInterruption.THROW_CHECKED
                         }
@@ -235,7 +254,7 @@ class SuspendProjectionGradlePluginTest {
                     }
                 }
                 dependencies { automatic = true }
-                verification { enabled = true }
+                verification { enable = true }
             }
             """.trimIndent(),
         )
@@ -245,7 +264,8 @@ class SuspendProjectionGradlePluginTest {
                 """
                 package sample
 
-                import cn.chuanwise.kotlinsuspendprojection.annotations.SuspendProjection
+                import cn.chuanwise.kotlinsuspendprojection.annotations.JvmSuspendProjection
+                import cn.chuanwise.kotlinsuspendprojection.annotations.JvmProjectionType
 
                 @JvmInline
                 value class UserId(val value: String)
@@ -255,8 +275,14 @@ class SuspendProjectionGradlePluginTest {
 
                 class RequestContext(val requestId: String)
 
-                @SuspendProjection
+                @JvmSuspendProjection
                 interface GenericOwner<T> where T : CharSequence, T : Comparable<T> {
+                    @JvmSuspendProjection(
+                        JvmProjectionType.BLOCKING,
+                        JvmProjectionType.COMPLETION_STAGE,
+                        JvmProjectionType.COMPLETABLE_FUTURE,
+                        JvmProjectionType.FUTURE,
+                    )
                     suspend fun echo(value: T): T
                     suspend fun <R : T> map(value: R): R
                     suspend fun T.decorate(suffix: String): T
@@ -270,12 +296,16 @@ class SuspendProjectionGradlePluginTest {
                 }
 
                 interface PartiallyProjected {
-                    @SuspendProjection
+                    @JvmSuspendProjection
                     suspend fun selected(value: String): String
                     suspend fun skipped(value: String): String
                 }
 
-                @SuspendProjection
+                @JvmSuspendProjection(
+                    JvmProjectionType.COMPLETION_STAGE,
+                    JvmProjectionType.COMPLETABLE_FUTURE,
+                    JvmProjectionType.FUTURE,
+                )
                 interface AsyncApi {
                     suspend fun load(value: String): String
                 }
@@ -298,6 +328,29 @@ class SuspendProjectionGradlePluginTest {
                 """.trimIndent(),
             )
         }
+        projectDir.resolve("src/main/kotlin/sample/FilePolicy.kt").writeText(
+            """
+            @file:cn.chuanwise.kotlinsuspendprojection.annotations.JvmSuspendProjection(
+                cn.chuanwise.kotlinsuspendprojection.annotations.JvmProjectionType.FUTURE,
+            )
+
+            package sample
+
+            import cn.chuanwise.kotlinsuspendprojection.annotations.JvmSuspendProjection
+
+            interface FileProjected {
+                suspend fun inherited(value: String): String
+            }
+
+            @JvmSuspendProjection(enable = false)
+            interface DisabledAtClass {
+                suspend fun disabled(value: String): String
+
+                @JvmSuspendProjection(enable = true)
+                suspend fun reenabled(value: String): String
+            }
+            """.trimIndent(),
+        )
         projectDir.resolve("src/main/java/sample/JavaOwner.java").apply {
             parent.createDirectories()
             writeText(
@@ -439,7 +492,7 @@ class SuspendProjectionGradlePluginTest {
             apply(plugin = "cn.chuanwise.kotlinsuspendprojection")
 
             extensions.configure<cn.chuanwise.kotlinsuspendprojection.gradle.SuspendProjectionExtension> {
-                primary(cn.chuanwise.kotlinsuspendprojection.gradle.JvmProjection.BLOCKING)
+                primary = cn.chuanwise.kotlinsuspendprojection.gradle.JvmProjection.BLOCKING
             }
             """.trimIndent(),
         )
@@ -449,9 +502,9 @@ class SuspendProjectionGradlePluginTest {
                 """
                 package sample
 
-                import cn.chuanwise.kotlinsuspendprojection.annotations.SuspendProjection
+                import cn.chuanwise.kotlinsuspendprojection.annotations.JvmSuspendProjection
 
-                @SuspendProjection
+                @JvmSuspendProjection
                 interface RequiredApi {
                     suspend fun first(value: String): String
                     suspend fun second(value: String): String
@@ -503,7 +556,10 @@ class SuspendProjectionGradlePluginTest {
             apply(plugin = "cn.chuanwise.kotlinsuspendprojection")
 
             extensions.configure<cn.chuanwise.kotlinsuspendprojection.gradle.SuspendProjectionExtension> {
-                primary(cn.chuanwise.kotlinsuspendprojection.gradle.JvmProjection.COMPLETION_STAGE)
+                projections = setOf(
+                    cn.chuanwise.kotlinsuspendprojection.gradle.JvmProjection.COMPLETION_STAGE,
+                )
+                primary = cn.chuanwise.kotlinsuspendprojection.gradle.JvmProjection.COMPLETION_STAGE
             }
             """.trimIndent(),
         )
@@ -513,9 +569,9 @@ class SuspendProjectionGradlePluginTest {
                 """
                 package sample
 
-                import cn.chuanwise.kotlinsuspendprojection.annotations.SuspendProjection
+                import cn.chuanwise.kotlinsuspendprojection.annotations.JvmSuspendProjection
 
-                @SuspendProjection
+                @JvmSuspendProjection
                 interface StageApi {
                     suspend fun load(value: String): String
                 }

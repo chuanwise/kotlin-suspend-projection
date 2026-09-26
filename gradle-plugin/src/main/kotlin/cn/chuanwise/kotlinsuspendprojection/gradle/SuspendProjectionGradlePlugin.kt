@@ -60,7 +60,7 @@ public class SuspendProjectionGradlePlugin : KotlinCompilerPluginSupportPlugin {
             task.group = "verification"
             task.description = "Verifies generated suspend projection bytecode and metadata."
             task.verifier.from(verifierClasspath)
-            task.onlyIf { extension.verification.enabled }
+            task.onlyIf { extension.verification.enable }
         }
         target.pluginManager.withPlugin("java") {
             val jar = target.tasks.named("jar")
@@ -75,7 +75,7 @@ public class SuspendProjectionGradlePlugin : KotlinCompilerPluginSupportPlugin {
     override fun isApplicable(kotlinCompilation: KotlinCompilation<*>): Boolean {
         val extension = kotlinCompilation.target.project.extensions
             .getByType(SuspendProjectionExtension::class.java)
-        return extension.enabled && kotlinCompilation.platformType.name == "jvm"
+        return extension.enable && kotlinCompilation.platformType.name == "jvm"
     }
 
     override fun getCompilerPluginId(): String = COMPILER_PLUGIN_ID
@@ -126,7 +126,7 @@ public class SuspendProjectionGradlePlugin : KotlinCompilerPluginSupportPlugin {
                 ),
                 SubpluginOption(
                     "blockingExportsEnabled",
-                    extension.jvm.blocking.exports.enabled.toString(),
+                    extension.jvm.blocking.exports.enable.toString(),
                 ),
                 SubpluginOption(
                     "blockingEmitNamedCaller",
@@ -134,11 +134,11 @@ public class SuspendProjectionGradlePlugin : KotlinCompilerPluginSupportPlugin {
                 ),
                 SubpluginOption(
                     "blockingImportsEnabled",
-                    extension.jvm.blocking.imports.enabled.toString(),
+                    extension.jvm.blocking.imports.enable.toString(),
                 ),
                 SubpluginOption(
                     "completionStageExportsEnabled",
-                    extension.jvm.completionStage.exports.enabled.toString(),
+                    extension.jvm.completionStage.exports.enable.toString(),
                 ),
                 SubpluginOption(
                     "completionStageEmitNamedCaller",
@@ -146,11 +146,11 @@ public class SuspendProjectionGradlePlugin : KotlinCompilerPluginSupportPlugin {
                 ),
                 SubpluginOption(
                     "completionStageImportsEnabled",
-                    extension.jvm.completionStage.imports.enabled.toString(),
+                    extension.jvm.completionStage.imports.enable.toString(),
                 ),
                 SubpluginOption(
                     "completableFutureExportsEnabled",
-                    extension.jvm.completableFuture.exports.enabled.toString(),
+                    extension.jvm.completableFuture.exports.enable.toString(),
                 ),
                 SubpluginOption(
                     "completableFutureEmitNamedCaller",
@@ -158,11 +158,11 @@ public class SuspendProjectionGradlePlugin : KotlinCompilerPluginSupportPlugin {
                 ),
                 SubpluginOption(
                     "completableFutureImportsEnabled",
-                    extension.jvm.completableFuture.imports.enabled.toString(),
+                    extension.jvm.completableFuture.imports.enable.toString(),
                 ),
-                SubpluginOption("futureExportsEnabled", extension.jvm.future.exports.enabled.toString()),
+                SubpluginOption("futureExportsEnabled", extension.jvm.future.exports.enable.toString()),
                 SubpluginOption("futureEmitNamedCaller", extension.jvm.future.exports.emitNamedCaller.toString()),
-                SubpluginOption("futureImportsEnabled", extension.jvm.future.imports.enabled.toString()),
+                SubpluginOption("futureImportsEnabled", extension.jvm.future.imports.enable.toString()),
                 SubpluginOption(
                     "emitCompatibilityGuard",
                     extension.jvm.runtimeGuards.compatibility.toString(),

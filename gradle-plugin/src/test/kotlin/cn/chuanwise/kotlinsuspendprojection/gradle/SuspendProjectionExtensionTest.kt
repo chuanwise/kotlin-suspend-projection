@@ -10,10 +10,10 @@ class SuspendProjectionExtensionTest {
     @Test
     fun `blocking primary preset configures caller and implementation policies`() {
         val extension = SuspendProjectionExtension().apply {
-            enabled = true
+            enable = true
             selection { mode = SelectionMode.ANNOTATED }
             generatedTypes { namespace = "Interop" }
-            primary(JvmProjection.BLOCKING)
+            primary = JvmProjection.BLOCKING
             jvm {
                 runtimeGuards {
                     compatibility = false
@@ -42,30 +42,36 @@ class SuspendProjectionExtensionTest {
     }
 
     @Test
-    fun `default configuration keeps named caller and explicit implementation interface`() {
+    fun `default configuration uses only blocking primary`() {
         val extension = SuspendProjectionExtension()
 
         extension.validate()
 
-        assertTrue(extension.enabled)
+        assertTrue(extension.enable)
         assertEquals(SelectionMode.ANNOTATED, extension.selection.mode)
         assertEquals("Projections", extension.generatedTypes.namespace)
-        assertEquals(JvmProjection.NONE, extension.jvm.sameNameCaller)
-        assertEquals(JvmProjection.NONE, extension.jvm.directImplementation.projection)
-        assertTrue(extension.jvm.blocking.exports.emitNamedCaller)
-        assertTrue(extension.jvm.blocking.imports.enabled)
-        assertTrue(extension.jvm.completionStage.exports.enabled)
-        assertTrue(extension.jvm.completionStage.imports.enabled)
-        assertTrue(extension.jvm.completableFuture.exports.enabled)
-        assertTrue(extension.jvm.completableFuture.imports.enabled)
-        assertTrue(extension.jvm.future.exports.enabled)
-        assertTrue(extension.jvm.future.imports.enabled)
+        assertEquals(setOf(JvmProjection.BLOCKING), extension.projections)
+        assertEquals(JvmProjection.BLOCKING, extension.primary)
+        assertEquals(JvmProjection.BLOCKING, extension.jvm.sameNameCaller)
+        assertEquals(JvmProjection.BLOCKING, extension.jvm.directImplementation.projection)
+        assertFalse(extension.jvm.blocking.exports.emitNamedCaller)
+        assertTrue(extension.jvm.blocking.imports.enable)
+        assertFalse(extension.jvm.completionStage.exports.enable)
+        assertTrue(extension.jvm.completionStage.exports.emitNamedCaller)
+        assertFalse(extension.jvm.completionStage.imports.enable)
+        assertFalse(extension.jvm.completableFuture.exports.enable)
+        assertTrue(extension.jvm.completableFuture.exports.emitNamedCaller)
+        assertFalse(extension.jvm.completableFuture.imports.enable)
+        assertFalse(extension.jvm.future.exports.enable)
+        assertTrue(extension.jvm.future.exports.emitNamedCaller)
+        assertFalse(extension.jvm.future.imports.enable)
     }
 
     @Test
     fun `completion stage primary configures strict direct implementation`() {
         val extension = SuspendProjectionExtension().apply {
-            primary(JvmProjection.COMPLETION_STAGE)
+            projections = setOf(JvmProjection.COMPLETION_STAGE)
+            primary = JvmProjection.COMPLETION_STAGE
         }
 
         extension.validate()

@@ -59,12 +59,12 @@ public class GeneratedTypesConfiguration {
 }
 
 public class BlockingExportsConfiguration {
-    public var enabled: Boolean = true
-    public var emitNamedCaller: Boolean = true
+    public var enable: Boolean = true
+    public var emitNamedCaller: Boolean = false
 }
 
 public class BlockingImportsConfiguration {
-    public var enabled: Boolean = true
+    public var enable: Boolean = true
     public var execution: BlockingExecution = BlockingExecution.DIRECT
     public var interruption: BlockingInterruption = BlockingInterruption.THROW_CHECKED
 }
@@ -83,12 +83,12 @@ public class BlockingProjectionConfiguration {
 }
 
 public class AsyncExportsConfiguration {
-    public var enabled: Boolean = true
+    public var enable: Boolean = false
     public var emitNamedCaller: Boolean = true
 }
 
 public class AsyncImportsConfiguration {
-    public var enabled: Boolean = true
+    public var enable: Boolean = false
 }
 
 public open class AsyncProjectionConfiguration {
@@ -105,10 +105,10 @@ public open class AsyncProjectionConfiguration {
 }
 
 public class DirectImplementationConfiguration {
-    public var projection: JvmProjection = JvmProjection.NONE
+    public var projection: JvmProjection = JvmProjection.BLOCKING
     public var enforcement: DirectImplementationEnforcement =
-        DirectImplementationEnforcement.GUARDED_DEFAULT
-    public var uninstrumentedKotlin: UninstrumentedKotlin = UninstrumentedKotlin.WARNING
+        DirectImplementationEnforcement.STRICT
+    public var uninstrumentedKotlin: UninstrumentedKotlin = UninstrumentedKotlin.ERROR
 }
 
 public class RuntimeGuardsConfiguration {
@@ -118,7 +118,7 @@ public class RuntimeGuardsConfiguration {
 
 public class JvmProjectionConfiguration {
     public var rawSuspendAbi: RawSuspendAbi = RawSuspendAbi.HIDDEN
-    public var sameNameCaller: JvmProjection = JvmProjection.NONE
+    public var sameNameCaller: JvmProjection = JvmProjection.BLOCKING
     public val directImplementation: DirectImplementationConfiguration =
         DirectImplementationConfiguration()
     public val blocking: BlockingProjectionConfiguration = BlockingProjectionConfiguration()
@@ -157,11 +157,45 @@ public class DependencyConfiguration {
 }
 
 public class VerificationConfiguration {
-    public var enabled: Boolean = true
+    public var enable: Boolean = true
 }
 
 public open class SuspendProjectionExtension {
-    public var enabled: Boolean = true
+    public var enable: Boolean = true
+    public var projections: Set<JvmProjection> = setOf(JvmProjection.BLOCKING)
+        set(value) {
+            require(value.all { it in SUPPORTED_POLICY_PROJECTIONS && it != JvmProjection.NONE }) {
+                "Project projections support Blocking, CompletionStage, CompletableFuture, and Future"
+            }
+            field = value.toSet()
+            SUPPORTED_POLICY_PROJECTIONS.filterNot { it == JvmProjection.NONE }.forEach { projection ->
+                projectionConfiguration(projection).apply {
+                    val enable = projection in field
+                    setExportsEnabled(enable)
+                    setImportsEnabled(enable)
+                    setEmitNamedCaller(projection != primary)
+                }
+            }
+        }
+    public var primary: JvmProjection = JvmProjection.BLOCKING
+        set(value) {
+            require(value in SUPPORTED_POLICY_PROJECTIONS) {
+                "Primary projection must be None, Blocking, CompletionStage, CompletableFuture, or Future"
+            }
+            val previous = field
+            field = value
+            if (previous != JvmProjection.NONE && previous in projections) {
+                projectionConfiguration(previous).setEmitNamedCaller(true)
+            }
+            jvm.sameNameCaller = value
+            jvm.directImplementation.projection = value
+            if (value != JvmProjection.NONE) {
+                projections = projections + value
+                projectionConfiguration(value).setEmitNamedCaller(false)
+            }
+            jvm.directImplementation.enforcement = DirectImplementationEnforcement.STRICT
+            jvm.directImplementation.uninstrumentedKotlin = UninstrumentedKotlin.ERROR
+        }
     public val selection: SelectionConfiguration = SelectionConfiguration()
     public val generatedTypes: GeneratedTypesConfiguration = GeneratedTypesConfiguration()
     public val jvm: JvmProjectionConfiguration = JvmProjectionConfiguration()
@@ -188,21 +222,6 @@ public open class SuspendProjectionExtension {
         verification.configure()
     }
 
-    public fun primary(projection: JvmProjection) {
-        require(projection in SUPPORTED_POLICY_PROJECTIONS && projection != JvmProjection.NONE) {
-            "Primary projection must be Blocking, CompletionStage, CompletableFuture, or Future"
-        }
-        jvm.sameNameCaller = projection
-        jvm.directImplementation.projection = projection
-        jvm.directImplementation.enforcement = DirectImplementationEnforcement.STRICT
-        jvm.directImplementation.uninstrumentedKotlin = UninstrumentedKotlin.ERROR
-        projectionConfiguration(projection).apply {
-            setExportsEnabled(true)
-            setEmitNamedCaller(false)
-            setImportsEnabled(true)
-        }
-    }
-
     internal fun validate() {
         require(generatedTypes.layout == GeneratedTypeLayout.NESTED_NAMESPACE) {
             "Only generatedTypes.layout = NESTED_NAMESPACE is implemented"
@@ -220,12 +239,12 @@ public open class SuspendProjectionExtension {
         }
         if (jvm.sameNameCaller != JvmProjection.NONE) {
             require(projectionConfiguration(jvm.sameNameCaller).exportsEnabled()) {
-                "${jvm.sameNameCaller} exports must be enabled when it is the same-name caller"
+                "${jvm.sameNameCaller} exports.enable must be true for the same-name caller"
             }
         }
         if (jvm.directImplementation.projection != JvmProjection.NONE) {
             require(projectionConfiguration(jvm.directImplementation.projection).importsEnabled()) {
-                "${jvm.directImplementation.projection} imports must be enabled when it is the " +
+                "${jvm.directImplementation.projection} imports.enable must be true for the " +
                     "direct implementation"
             }
         }
@@ -234,32 +253,32 @@ public open class SuspendProjectionExtension {
     private fun projectionConfiguration(projection: JvmProjection): ProjectionConfigurationView =
         when (projection) {
             JvmProjection.BLOCKING -> ProjectionConfigurationView(
-                exportsEnabled = { jvm.blocking.exports.enabled },
-                setExportsEnabled = { jvm.blocking.exports.enabled = it },
+                exportsEnabled = { jvm.blocking.exports.enable },
+                setExportsEnabled = { jvm.blocking.exports.enable = it },
                 setEmitNamedCaller = { jvm.blocking.exports.emitNamedCaller = it },
-                importsEnabled = { jvm.blocking.imports.enabled },
-                setImportsEnabled = { jvm.blocking.imports.enabled = it },
+                importsEnabled = { jvm.blocking.imports.enable },
+                setImportsEnabled = { jvm.blocking.imports.enable = it },
             )
             JvmProjection.COMPLETION_STAGE -> ProjectionConfigurationView(
-                exportsEnabled = { jvm.completionStage.exports.enabled },
-                setExportsEnabled = { jvm.completionStage.exports.enabled = it },
+                exportsEnabled = { jvm.completionStage.exports.enable },
+                setExportsEnabled = { jvm.completionStage.exports.enable = it },
                 setEmitNamedCaller = { jvm.completionStage.exports.emitNamedCaller = it },
-                importsEnabled = { jvm.completionStage.imports.enabled },
-                setImportsEnabled = { jvm.completionStage.imports.enabled = it },
+                importsEnabled = { jvm.completionStage.imports.enable },
+                setImportsEnabled = { jvm.completionStage.imports.enable = it },
             )
             JvmProjection.COMPLETABLE_FUTURE -> ProjectionConfigurationView(
-                exportsEnabled = { jvm.completableFuture.exports.enabled },
-                setExportsEnabled = { jvm.completableFuture.exports.enabled = it },
+                exportsEnabled = { jvm.completableFuture.exports.enable },
+                setExportsEnabled = { jvm.completableFuture.exports.enable = it },
                 setEmitNamedCaller = { jvm.completableFuture.exports.emitNamedCaller = it },
-                importsEnabled = { jvm.completableFuture.imports.enabled },
-                setImportsEnabled = { jvm.completableFuture.imports.enabled = it },
+                importsEnabled = { jvm.completableFuture.imports.enable },
+                setImportsEnabled = { jvm.completableFuture.imports.enable = it },
             )
             JvmProjection.FUTURE -> ProjectionConfigurationView(
-                exportsEnabled = { jvm.future.exports.enabled },
-                setExportsEnabled = { jvm.future.exports.enabled = it },
+                exportsEnabled = { jvm.future.exports.enable },
+                setExportsEnabled = { jvm.future.exports.enable = it },
                 setEmitNamedCaller = { jvm.future.exports.emitNamedCaller = it },
-                importsEnabled = { jvm.future.imports.enabled },
-                setImportsEnabled = { jvm.future.imports.enabled = it },
+                importsEnabled = { jvm.future.imports.enable },
+                setImportsEnabled = { jvm.future.imports.enable = it },
             )
             else -> error("Projection $projection does not support generated callers or imports")
         }

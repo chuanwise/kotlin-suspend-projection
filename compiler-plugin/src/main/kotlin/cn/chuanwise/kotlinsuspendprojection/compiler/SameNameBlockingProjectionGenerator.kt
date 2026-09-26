@@ -52,8 +52,6 @@ internal class SameNameBlockingProjectionGenerator(
     private val jvmNameClassId = ClassId.topLevel(FqName("kotlin.jvm.JvmName"))
     private val projectionMetaClassId =
         ClassId.topLevel(FqName("cn.chuanwise.kotlinsuspendprojection.annotations.SuspendProjectionMeta"))
-    private val suspendProjectionClassId =
-        ClassId.topLevel(FqName("cn.chuanwise.kotlinsuspendprojection.annotations.SuspendProjection"))
     private val subclassOptInRequiredClassId =
         ClassId.topLevel(FqName("kotlin.SubclassOptInRequired"))
     private val uninstrumentedWarningClassId = ClassId.topLevel(
@@ -108,13 +106,20 @@ internal class SameNameBlockingProjectionGenerator(
         val eligibleFunctions = eligibleSuspendFunctions(owner)
         if (eligibleFunctions.isEmpty()) return
 
-        addSubclassOptInRequirement(owner)
+        if (eligibleFunctions.any { function ->
+                configuration.directImplementation in
+                    function.projectionPolicy(owner, configuration).imports
+            }
+        ) {
+            addSubclassOptInRequirement(owner)
+        }
         eligibleFunctions.forEach { original ->
             hideRawSuspendAbiFromJava(original)
+            val policy = original.projectionPolicy(owner, configuration)
             val directProjection = configuration.directImplementation
-            val directName = directBridgeName(original)
+            val directName = directBridgeName(original, policy)
             val bridges = linkedMapOf<Name, BridgeSpec>()
-            configuration.enabledExports.forEach { projection ->
+            policy.exports.forEach { projection ->
                 if (configuration.sameNameCaller == projection) {
                     bridges.add(original.name, projection, FLAG_SAME_NAME)
                 }
@@ -194,7 +199,7 @@ internal class SameNameBlockingProjectionGenerator(
             .filter(::overridesStrictProjectedFunction)
             .forEach { original ->
                 hideRawSuspendAbiFromJava(original)
-                val bridgeName = checkNotNull(directBridgeName(original))
+                val bridgeName = directBridgeNameUnchecked(original)
                 val projection = configuration.directImplementation
                 owner.declarations += createExportBridge(
                     owner,
@@ -221,7 +226,7 @@ internal class SameNameBlockingProjectionGenerator(
             .filter {
                 it.isSuspend &&
                     it.visibility == DescriptorVisibilities.PUBLIC &&
-                    it.isSelected(owner)
+                    it.isProjectionSelected(owner, configuration)
             }
             .toList()
 
@@ -232,7 +237,9 @@ internal class SameNameBlockingProjectionGenerator(
                 .filterIsInstance<IrSimpleFunction>()
                 .any { candidate ->
                     !candidate.isSuspend &&
-                        candidate.name == directBridgeName(overridden.owner) &&
+                        configuration.directImplementation in
+                            overridden.owner.projectionPolicy(parent, configuration).imports &&
+                        candidate.name == directBridgeNameUnchecked(overridden.owner) &&
                         candidate.modality == Modality.ABSTRACT &&
                         normalizedRegularParameterTypes(candidate) ==
                         normalizedRegularParameterTypes(overridden.owner)
@@ -584,15 +591,21 @@ internal class SameNameBlockingProjectionGenerator(
         append(')')
     }
 
-    private fun IrSimpleFunction.isSelected(owner: IrClass): Boolean =
-        configuration.selectionMode == SelectionMode.ALL ||
-            annotations.hasAnnotation(suspendProjectionClassId.asSingleFqName()) ||
-            owner.annotations.hasAnnotation(suspendProjectionClassId.asSingleFqName())
-
-    private fun directBridgeName(original: IrSimpleFunction): Name? =
-        if (configuration.directImplementation == JvmProjection.NONE) {
+    private fun directBridgeName(
+        original: IrSimpleFunction,
+        policy: ProjectionPolicy,
+    ): Name? =
+        if (
+            configuration.directImplementation == JvmProjection.NONE ||
+            configuration.directImplementation !in policy.imports
+        ) {
             null
-        } else if (configuration.sameNameCaller == configuration.directImplementation) {
+        } else {
+            directBridgeNameUnchecked(original)
+        }
+
+    private fun directBridgeNameUnchecked(original: IrSimpleFunction): Name =
+        if (configuration.sameNameCaller == configuration.directImplementation) {
             original.name
         } else {
             configuration.directImplementation.namedFunction(original.name)
