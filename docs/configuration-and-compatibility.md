@@ -2,15 +2,13 @@
 
 ## 完整 Gradle DSL
 
-所有配置都是普通 Kotlin 属性，使用 `property = value`：
-
 ```kotlin
 import cn.chuanwise.kotlinsuspendprojection.gradle.*
 
 suspendProjection {
     enabled = true
 
-    selection { mode = SelectionMode.ALL }
+    selection { mode = SelectionMode.ANNOTATED }
     generatedTypes {
         layout = GeneratedTypeLayout.NESTED_NAMESPACE
         namespace = "Projections"
@@ -52,7 +50,7 @@ suspendProjection {
 | 配置 | 默认值 | 含义 |
 | --- | --- | --- |
 | `enabled` | `true` | 是否对 JVM compilation 应用编译器插件 |
-| `selection.mode` | `ALL` | 处理全部合格成员，或只处理 `@SuspendProjection` 声明 |
+| `selection.mode` | `ANNOTATED` | 默认只处理 `@SuspendProjection` 声明，可改为全部合格成员 |
 | `generatedTypes.layout` | `NESTED_NAMESPACE` | 生成类型布局 |
 | `generatedTypes.namespace` | `Projections` | 嵌套 namespace 类型名 |
 | `jvm.rawSuspendAbi` | `HIDDEN` | 是否用 `@JvmSynthetic` 对 Java 源码隐藏 lowered suspend ABI |
@@ -89,6 +87,14 @@ interface PartialApi {
 
 注解的完整名称为 `cn.chuanwise.kotlinsuspendprojection.annotations.SuspendProjection`，保留级别为 `BINARY`。
 
+需要为所有符合条件的声明生成投影时：
+
+```kotlin
+suspendProjection {
+    selection { mode = SelectionMode.ALL }
+}
+```
+
 ## 主投影预设
 
 ```kotlin
@@ -97,7 +103,30 @@ suspendProjection {
 }
 ```
 
-等价于启用 Blocking 同名 caller、Blocking direct implementation 和 Blocking imports，并关闭额外的命名 caller。其他细节仍可在预设之后覆盖。
+等价于启用 Blocking 同名 caller、Blocking direct implementation 和 Blocking imports，关闭额外的命名 caller，并设置：
+
+```kotlin
+directImplementation {
+    projection = JvmProjection.BLOCKING
+    enforcement = DirectImplementationEnforcement.STRICT
+    uninstrumentedKotlin = UninstrumentedKotlin.ERROR
+}
+```
+
+其他细节仍可在预设之后显式覆盖。
+
+## Direct implementation 的权衡
+
+`STRICT` 让 Java 漏实现投影方法时直接编译失败，是 `primary(BLOCKING)` 的默认策略。它也带来以下约束：
+
+- canonical 接口新增同名同步抽象方法，属于公开 JVM ABI；
+- Java 的多接口继承、已有同名方法和泛型擦除可能产生冲突；
+- 受插件处理的 Kotlin 实现会自动 opt-in 并生成同步桥；
+- 无插件 Kotlin 实现默认被 ERROR 级 `@SubclassOptInRequired` 阻止；
+- 手工 opt-in 只是显式承担风险，不会替代 bridge 生成；
+- 零插件 Kotlin 实现方应实现 `Foo.Projections.ViaBlocking`，或避免 direct implementation。
+
+需要保留双向默认桥时，可以在 `primary(...)` 后覆盖为 `GUARDED_DEFAULT`。此模式不能在 Java 编译期发现漏实现，只能在执行无效路径时抛出 `InvalidSuspendProjectionPathException`。
 
 ## 当前实现边界
 

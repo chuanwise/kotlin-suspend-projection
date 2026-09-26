@@ -52,9 +52,11 @@ suspendProjection {
 }
 ```
 
-此时 Java 可以直接实现 canonical 接口，并提供同名同步方法。`GUARDED_DEFAULT` 在缺少两侧实现时抛出 `InvalidSuspendProjectionPathException`；`STRICT` 则把同步方法生成为抽象契约。
+此时 Java 可以直接实现 canonical 接口，并提供同名同步方法。主投影默认使用 `STRICT`，同步方法是抽象契约，漏实现会由 Java 编译器报告。
 
-接口上的 `@SubclassOptInRequired` 会提醒未安装插件的 Kotlin 实现方。提醒级别由 `uninstrumentedKotlin` 配置；Java 不受 Kotlin opt-in 机制影响。
+接口上的 `@SubclassOptInRequired` 默认以 ERROR 阻止未安装插件的 Kotlin 实现方。提醒级别可通过 `uninstrumentedKotlin` 调整；Java 不受 Kotlin opt-in 机制影响。
+
+direct implementation 会增加接口 ABI，并可能与 Java 多接口继承中的同名方法冲突。Kotlin 实现方需要插件生成 strict bridge；手工 opt-in 不会代替代码生成。需要零插件 Kotlin 实现时，优先使用 `ViaBlocking`。
 
 ## 泛型 owner
 

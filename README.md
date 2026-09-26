@@ -44,8 +44,6 @@ plugins {
 }
 ```
 
-配置使用普通 Kotlin 属性赋值，不需要 `.set(...)`：
-
 ```kotlin
 import cn.chuanwise.kotlinsuspendprojection.gradle.*
 
@@ -93,7 +91,9 @@ suspendProjection {
 
 ## 使用注解选择 API
 
-默认 `SelectionMode.ALL` 会处理所有符合条件的 public interface suspend 成员。切换为 `ANNOTATED` 后，可以标注整个接口：
+默认只处理带 `@SuspendProjection` 的接口或函数。需要处理所有符合条件的 public interface suspend 成员时，显式配置 `SelectionMode.ALL`。
+
+可以标注整个接口：
 
 ```kotlin
 import cn.chuanwise.kotlinsuspendprojection.annotations.SuspendProjection
@@ -127,7 +127,7 @@ suspendProjection {
 }
 ```
 
-该预设启用同名 caller、Blocking direct implementation 和 Blocking imports，并关闭额外的 `fooBlocking` caller。Java 可直接实现：
+该预设启用同名 caller、Blocking direct implementation 和 Blocking imports，并关闭额外的 `fooBlocking` caller。它同时选择 `STRICT` enforcement 和 `ERROR` 级无插件 Kotlin 提醒。Java 可直接实现：
 
 ```java
 public final class JavaGreeter implements Greeter {
@@ -138,9 +138,15 @@ public final class JavaGreeter implements Greeter {
 }
 ```
 
-`GUARDED_DEFAULT` 会为 canonical suspend 与同步方法生成双向默认桥。如果实现类两侧都没有实现，运行时抛出 `InvalidSuspendProjectionPathException`，表示进入了无有效实现的递归适配路径，而不是等到栈溢出。
+`STRICT` 把同步方法生成为抽象契约，因此 Java 漏写 `override` 会在编译期失败。接口还会携带 `@SubclassOptInRequired`；未安装编译器插件的 Kotlin 实现方默认得到 ERROR，安装 Gradle 插件的编译会自动 opt-in，并生成 Kotlin 实现所需的同步桥。
 
-启用 direct implementation 后，接口还会携带 `@SubclassOptInRequired`。未安装编译器插件的 Kotlin 实现方会按照 `uninstrumentedKotlin = WARNING | ERROR | OFF` 得到提醒；安装 Gradle 插件的编译自动 opt-in，并由插件生成和验证所需桥。
+### Direct implementation 的限制
+
+- 同名同步方法会扩大 canonical 接口的公开 JVM ABI，启用、关闭或更换投影都属于兼容性变更；
+- Java 多接口继承中可能出现同名同参数但返回类型不兼容的冲突；
+- Kotlin direct implementer 需要编译器插件生成 strict bridge。手工 opt-in 只关闭诊断，不会生成 bridge；
+- 不适合 direct implementation 的消费者可以继续使用 `Foo.Projections.ViaBlocking`；
+- `GUARDED_DEFAULT` 仍可显式配置，但漏实现只能在运行时由 `InvalidSuspendProjectionPathException` 检出。
 
 ## 当前支持范围
 

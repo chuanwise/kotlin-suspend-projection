@@ -76,7 +76,7 @@ direct implementation 方法成为抽象契约。编译器为受插件处理的 
 
 ## 选择与布局
 
-`SelectionMode.ALL` 处理全部符合条件的声明。`SelectionMode.ANNOTATED` 只处理带 `@SuspendProjection` 的接口或函数。
+默认的 `SelectionMode.ANNOTATED` 只处理带 `@SuspendProjection` 的接口或函数。`SelectionMode.ALL` 是显式的全量 opt-in。
 
 当前布局是 `Foo.<namespace>.ViaBlocking`，其中 namespace 默认是 `Projections`，可以配置为其他合法 JVM 标识符。其他布局枚举尚未实现，配置阶段会明确拒绝。
 
