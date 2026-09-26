@@ -1,7 +1,7 @@
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
-    kotlin("jvm")
+    alias(libs.plugins.kotlin.jvm)
     application
 }
 
@@ -16,9 +16,9 @@ kotlin {
 dependencies {
     implementation(project(":annotations"))
     implementation(project(":runtime-core"))
-    implementation("org.ow2.asm:asm:9.7.1")
+    implementation(libs.asm)
 }
 
 application {
-    mainClass.set("dev.suspendprojection.verification.SuspendProjectionVerifierCli")
+    mainClass.set("cn.chuanwise.kotlinsuspendprojection.verification.SuspendProjectionVerifierCli")
 }

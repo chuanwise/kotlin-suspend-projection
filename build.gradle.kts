@@ -1,11 +1,11 @@
 import org.gradle.api.tasks.compile.JavaCompile
 
 plugins {
-    kotlin("jvm") version "2.4.20" apply false
+    alias(libs.plugins.kotlin.jvm) apply false
 }
 
-group = "dev.suspendprojection"
-version = "0.1.0-SNAPSHOT"
+group = "cn.chuanwise.kotlinsuspendprojection"
+version = libs.versions.project.get()
 
 subprojects {
     tasks.withType<JavaCompile>().configureEach {

@@ -2,18 +2,18 @@ import org.gradle.api.tasks.testing.Test
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
-    kotlin("jvm")
+    alias(libs.plugins.kotlin.jvm)
     `java-gradle-plugin`
 }
 
 dependencies {
-    compileOnly("org.jetbrains.kotlin:kotlin-gradle-plugin-api:2.4.20")
-    compileOnly("org.jetbrains.kotlin:kotlin-gradle-plugin:2.4.20")
+    compileOnly(libs.kotlin.gradle.plugin.api)
+    compileOnly(libs.kotlin.gradle.plugin)
 
-    testImplementation(kotlin("test-junit5"))
+    testImplementation(libs.kotlin.test.junit5)
     testImplementation(gradleTestKit())
-    testImplementation("org.ow2.asm:asm:9.7.1")
-    testRuntimeOnly("org.junit.platform:junit-platform-launcher")
+    testImplementation(libs.asm)
+    testRuntimeOnly(libs.junit.platform.launcher)
 }
 
 kotlin {
@@ -25,8 +25,9 @@ kotlin {
 gradlePlugin {
     plugins {
         create("suspendProjection") {
-            id = "dev.suspendprojection"
-            implementationClass = "dev.suspendprojection.gradle.SuspendProjectionGradlePlugin"
+            id = "cn.chuanwise.kotlinsuspendprojection"
+            implementationClass =
+                "cn.chuanwise.kotlinsuspendprojection.gradle.SuspendProjectionGradlePlugin"
             displayName = "Kotlin Suspend Projection"
             description = "Generates Java-facing projections for Kotlin suspend APIs"
         }
@@ -44,6 +45,7 @@ tasks.withType<Test>().configureEach {
     )
     systemProperty("suspendProjection.repoRoot", rootProject.projectDir.absolutePath)
     systemProperty("suspendProjection.version", rootProject.version.toString())
+    systemProperty("suspendProjection.kotlinVersion", libs.versions.kotlin.get())
     systemProperty(
         "suspendProjection.testKitDir",
         rootProject.layout.projectDirectory.dir(".gradle-test-kit").asFile.absolutePath,

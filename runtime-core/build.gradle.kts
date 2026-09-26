@@ -1,7 +1,7 @@
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
-    kotlin("jvm")
+    alias(libs.plugins.kotlin.jvm)
 }
 
 kotlin {
@@ -13,8 +13,8 @@ kotlin {
 }
 
 dependencies {
-    testImplementation(kotlin("test-junit5"))
-    testRuntimeOnly("org.junit.platform:junit-platform-launcher")
+    testImplementation(libs.kotlin.test.junit5)
+    testRuntimeOnly(libs.junit.platform.launcher)
 }
 
 tasks.test {

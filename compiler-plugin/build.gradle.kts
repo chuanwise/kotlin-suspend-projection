@@ -1,11 +1,11 @@
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
-    kotlin("jvm")
+    alias(libs.plugins.kotlin.jvm)
 }
 
 dependencies {
-    implementation(kotlin("compiler"))
+    implementation(libs.kotlin.compiler.embeddable)
 }
 
 kotlin {
