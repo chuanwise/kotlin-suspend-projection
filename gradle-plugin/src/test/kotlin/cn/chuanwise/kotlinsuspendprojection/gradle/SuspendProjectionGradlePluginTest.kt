@@ -8,6 +8,7 @@ import kotlin.io.path.createDirectories
 import kotlin.io.path.writeText
 import kotlin.test.Test
 import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 import org.gradle.testkit.runner.GradleRunner
 import org.gradle.testkit.runner.TaskOutcome
@@ -65,6 +66,11 @@ class SuspendProjectionGradlePluginTest {
         assertTrue(hasEntry(jar, "sample/JavaAsyncOwners\$Stage.class"))
         assertTrue(hasEntry(jar, "sample/JavaAsyncOwners\$Completable.class"))
         assertTrue(hasEntry(jar, "sample/JavaAsyncOwners\$Legacy.class"))
+        assertTrue(hasEntry(jar, "sample/JavaMixedGenericOwners\$Direct.class"))
+        assertTrue(hasEntry(jar, "sample/JavaMixedGenericOwners\$Blocking.class"))
+        assertTrue(hasEntry(jar, "sample/JavaMixedGenericOwners\$Stage.class"))
+        assertTrue(hasEntry(jar, "sample/JavaMixedGenericOwners\$Completable.class"))
+        assertTrue(hasEntry(jar, "sample/JavaMixedGenericOwners\$Legacy.class"))
         assertTrue(hasEntry(jar, "sample/FileProjected\$Interop\$ViaFuture.class"))
         assertTrue(hasEntry(jar, "sample/DisabledAtClass\$Interop\$ViaFuture.class"))
         assertTrue(projectionMethods.contains("echoBlocking"))
@@ -125,6 +131,7 @@ class SuspendProjectionGradlePluginTest {
                     }
                 },
         )
+        assertMixedGenericSignatures(jar)
     }
 
     @Test
@@ -295,6 +302,25 @@ class SuspendProjectionGradlePluginTest {
                     private suspend fun privateOnly(value: T): T = value
                 }
 
+                @JvmSuspendProjection(
+                    JvmProjectionType.BLOCKING,
+                    JvmProjectionType.COMPLETION_STAGE,
+                    JvmProjectionType.COMPLETABLE_FUTURE,
+                    JvmProjectionType.FUTURE,
+                )
+                interface MixedGenericApi<T> where T : CharSequence, T : Comparable<T> {
+                    suspend fun <R : T> ownerBound(value: R): R
+
+                    suspend fun <R> independent(owner: T, value: R): R
+                        where R : Number, R : Comparable<R>
+
+                    suspend fun <A, B : Number> select(
+                        owner: T,
+                        first: A,
+                        second: B,
+                    ): B where A : CharSequence, A : Comparable<A>
+                }
+
                 interface PartiallyProjected {
                     @JvmSuspendProjection
                     suspend fun selected(value: String): String
@@ -455,6 +481,132 @@ class SuspendProjectionGradlePluginTest {
                         CompletionStage<String> stage = api.loadCompletionStage("stage");
                         CompletableFuture<String> future = api.loadCompletableFuture("future");
                         Future<String> legacy = api.loadFuture("legacy");
+                    }
+                }
+                """.trimIndent(),
+            )
+        }
+        projectDir.resolve("src/main/java/sample/JavaMixedGenericOwners.java").apply {
+            parent.createDirectories()
+            writeText(
+                """
+                package sample;
+
+                import java.util.concurrent.CompletableFuture;
+                import java.util.concurrent.CompletionStage;
+                import java.util.concurrent.Future;
+
+                public final class JavaMixedGenericOwners {
+                    public static final class Text
+                            implements CharSequence, Comparable<Text> {
+                        private final String value;
+                        public Text(String value) { this.value = value; }
+                        public int length() { return value.length(); }
+                        public char charAt(int index) { return value.charAt(index); }
+                        public CharSequence subSequence(int start, int end) {
+                            return value.subSequence(start, end);
+                        }
+                        public int compareTo(Text other) {
+                            return value.compareTo(other.value);
+                        }
+                    }
+
+                    public static final class Direct implements MixedGenericApi<Text> {
+                        @Override public <R extends Text> R ownerBound(R value) {
+                            return value;
+                        }
+
+                        @Override public <R extends Number & Comparable<? super R>>
+                        R independent(Text owner, R value) {
+                            return value;
+                        }
+
+                        @Override public <A extends CharSequence & Comparable<? super A>, B extends Number>
+                        B select(Text owner, A first, B second) {
+                            return second;
+                        }
+                    }
+
+                    public static final class Blocking
+                            implements MixedGenericApi.Interop.ViaBlocking<Text> {
+                        @Override public <R extends Text> R ownerBoundBlocking(R value) {
+                            return value;
+                        }
+
+                        @Override public <R extends Number & Comparable<? super R>>
+                        R independentBlocking(Text owner, R value) {
+                            return value;
+                        }
+
+                        @Override public <A extends CharSequence & Comparable<? super A>, B extends Number>
+                        B selectBlocking(Text owner, A first, B second) {
+                            return second;
+                        }
+                    }
+
+                    public static final class Stage
+                            implements MixedGenericApi.Interop.ViaCompletionStage<Text> {
+                        @Override public <R extends Text>
+                        CompletionStage<R> ownerBoundCompletionStage(R value) {
+                            return CompletableFuture.completedFuture(value);
+                        }
+
+                        @Override public <R extends Number & Comparable<? super R>>
+                        CompletionStage<R> independentCompletionStage(Text owner, R value) {
+                            return CompletableFuture.completedFuture(value);
+                        }
+
+                        @Override public <A extends CharSequence & Comparable<? super A>, B extends Number>
+                        CompletionStage<B> selectCompletionStage(Text owner, A first, B second) {
+                            return CompletableFuture.completedFuture(second);
+                        }
+                    }
+
+                    public static final class Completable
+                            implements MixedGenericApi.Interop.ViaCompletableFuture<Text> {
+                        @Override public <R extends Text>
+                        CompletableFuture<R> ownerBoundCompletableFuture(R value) {
+                            return CompletableFuture.completedFuture(value);
+                        }
+
+                        @Override public <R extends Number & Comparable<? super R>>
+                        CompletableFuture<R> independentCompletableFuture(Text owner, R value) {
+                            return CompletableFuture.completedFuture(value);
+                        }
+
+                        @Override public <A extends CharSequence & Comparable<? super A>, B extends Number>
+                        CompletableFuture<B> selectCompletableFuture(Text owner, A first, B second) {
+                            return CompletableFuture.completedFuture(second);
+                        }
+                    }
+
+                    public static final class Legacy
+                            implements MixedGenericApi.Interop.ViaFuture<Text> {
+                        @Override public <R extends Text> Future<R> ownerBoundFuture(R value) {
+                            return CompletableFuture.completedFuture(value);
+                        }
+
+                        @Override public <R extends Number & Comparable<? super R>>
+                        Future<R> independentFuture(Text owner, R value) {
+                            return CompletableFuture.completedFuture(value);
+                        }
+
+                        @Override public <A extends CharSequence & Comparable<? super A>, B extends Number>
+                        Future<B> selectFuture(Text owner, A first, B second) {
+                            return CompletableFuture.completedFuture(second);
+                        }
+                    }
+
+                    public static <R extends Number & Comparable<? super R>> void callers(
+                            MixedGenericApi<Text> api,
+                            Text owner,
+                            R value
+                    ) {
+                        R blocking = api.independent(owner, value);
+                        CompletionStage<R> stage = api.independentCompletionStage(owner, value);
+                        CompletableFuture<R> completable =
+                                api.independentCompletableFuture(owner, value);
+                        Future<R> legacy = api.independentFuture(owner, value);
                     }
                 }
                 """.trimIndent(),
@@ -653,6 +805,159 @@ class SuspendProjectionGradlePluginTest {
             }
             accesses
         }
+
+    private fun assertMixedGenericSignatures(jarPath: Path) {
+        val ownerEntry = "sample/MixedGenericApi.class"
+        val projections = mapOf(
+            "Blocking" to "",
+            "CompletionStage" to "Ljava/util/concurrent/CompletionStage",
+            "CompletableFuture" to "Ljava/util/concurrent/CompletableFuture",
+            "Future" to "Ljava/util/concurrent/Future",
+        )
+
+        assertClassSignatureContains(
+            jarPath,
+            ownerEntry,
+            "<T::Ljava/lang/CharSequence;",
+            "Ljava/lang/Comparable",
+            "TT;",
+        )
+        projections.forEach { (projection, asyncReturnType) ->
+            val entry = "sample/MixedGenericApi\$Interop\$Via$projection.class"
+            assertClassSignatureContains(
+                jarPath,
+                entry,
+                "<T::Ljava/lang/CharSequence;",
+                "Ljava/lang/Comparable",
+                "TT;",
+            )
+
+            val suffix = projection
+            assertMethodSignatureContains(
+                jarPath,
+                entry,
+                "ownerBound$suffix",
+                "<R::TT;>",
+                "(TR;)",
+                "TR;",
+                asyncReturnType,
+            )
+            assertMethodSignatureContains(
+                jarPath,
+                entry,
+                "independent$suffix",
+                "<R:Ljava/lang/Number;",
+                "Ljava/lang/Comparable",
+                "(TT;TR;)",
+                "TR;",
+                asyncReturnType,
+            )
+            assertMethodSignatureContains(
+                jarPath,
+                entry,
+                "select$suffix",
+                "<A::Ljava/lang/CharSequence;",
+                "B:Ljava/lang/Number;",
+                "(TT;TA;TB;)",
+                "TB;",
+                asyncReturnType,
+            )
+        }
+
+        assertMethodSignatureContains(
+            jarPath,
+            ownerEntry,
+            "independent",
+            "<R:Ljava/lang/Number;",
+            "(TT;TR;)",
+            "TR;",
+        )
+        listOf("CompletionStage", "CompletableFuture", "Future").forEach { projection ->
+            assertMethodSignatureContains(
+                jarPath,
+                ownerEntry,
+                "independent$projection",
+                "<R:Ljava/lang/Number;",
+                "(TT;TR;)",
+                "TR;",
+                "Ljava/util/concurrent/$projection",
+            )
+        }
+    }
+
+    private fun assertClassSignatureContains(
+        jarPath: Path,
+        entryName: String,
+        vararg fragments: String,
+    ) {
+        val signature = assertNotNull(readClassSignature(jarPath, entryName))
+        assertTrue(
+            fragments.all(signature::contains),
+            "Expected $entryName signature <$signature> to contain ${fragments.toList()}",
+        )
+    }
+
+    private fun assertMethodSignatureContains(
+        jarPath: Path,
+        entryName: String,
+        methodName: String,
+        vararg fragments: String,
+    ) {
+        val signatures = readMethodSignatures(jarPath, entryName)[methodName].orEmpty()
+        assertTrue(
+            signatures.any { signature -> fragments.all(signature::contains) },
+            "Expected $entryName#$methodName signatures $signatures " +
+                "to contain ${fragments.toList()}",
+        )
+    }
+
+    private fun readClassSignature(jarPath: Path, entryName: String): String? =
+        JarFile(jarPath.toFile()).use { jar ->
+            var classSignature: String? = null
+            jar.getInputStream(checkNotNull(jar.getJarEntry(entryName))).use { input ->
+                ClassReader(input).accept(
+                    object : ClassVisitor(Opcodes.ASM9) {
+                        override fun visit(
+                            version: Int,
+                            access: Int,
+                            name: String,
+                            signature: String?,
+                            superName: String?,
+                            interfaces: Array<out String>?,
+                        ) {
+                            classSignature = signature
+                        }
+                    },
+                    ClassReader.SKIP_CODE,
+                )
+            }
+            classSignature
+        }
+
+    private fun readMethodSignatures(
+        jarPath: Path,
+        entryName: String,
+    ): Map<String, List<String>> = JarFile(jarPath.toFile()).use { jar ->
+        val signatures = linkedMapOf<String, MutableList<String>>()
+        jar.getInputStream(checkNotNull(jar.getJarEntry(entryName))).use { input ->
+            ClassReader(input).accept(
+                object : ClassVisitor(Opcodes.ASM9) {
+                    override fun visitMethod(
+                        access: Int,
+                        name: String,
+                        descriptor: String,
+                        signature: String?,
+                        exceptions: Array<out String>?,
+                    ): MethodVisitor? {
+                        signature?.let { signatures.getOrPut(name, ::mutableListOf) += it }
+                        return null
+                    }
+                },
+                ClassReader.SKIP_CODE,
+            )
+        }
+        signatures
+    }
 
     private fun readClassAnnotationClassValues(
         jarPath: Path,
