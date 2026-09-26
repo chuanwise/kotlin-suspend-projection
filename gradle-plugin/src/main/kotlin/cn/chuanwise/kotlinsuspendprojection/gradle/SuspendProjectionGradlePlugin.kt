@@ -137,6 +137,33 @@ public class SuspendProjectionGradlePlugin : KotlinCompilerPluginSupportPlugin {
                     extension.jvm.blocking.imports.enabled.toString(),
                 ),
                 SubpluginOption(
+                    "completionStageExportsEnabled",
+                    extension.jvm.completionStage.exports.enabled.toString(),
+                ),
+                SubpluginOption(
+                    "completionStageEmitNamedCaller",
+                    extension.jvm.completionStage.exports.emitNamedCaller.toString(),
+                ),
+                SubpluginOption(
+                    "completionStageImportsEnabled",
+                    extension.jvm.completionStage.imports.enabled.toString(),
+                ),
+                SubpluginOption(
+                    "completableFutureExportsEnabled",
+                    extension.jvm.completableFuture.exports.enabled.toString(),
+                ),
+                SubpluginOption(
+                    "completableFutureEmitNamedCaller",
+                    extension.jvm.completableFuture.exports.emitNamedCaller.toString(),
+                ),
+                SubpluginOption(
+                    "completableFutureImportsEnabled",
+                    extension.jvm.completableFuture.imports.enabled.toString(),
+                ),
+                SubpluginOption("futureExportsEnabled", extension.jvm.future.exports.enabled.toString()),
+                SubpluginOption("futureEmitNamedCaller", extension.jvm.future.exports.emitNamedCaller.toString()),
+                SubpluginOption("futureImportsEnabled", extension.jvm.future.imports.enabled.toString()),
+                SubpluginOption(
                     "emitCompatibilityGuard",
                     extension.jvm.runtimeGuards.compatibility.toString(),
                 ),

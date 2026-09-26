@@ -51,9 +51,10 @@ internal class SuspendProjectionFirDeclarationGenerator(
         classSymbol: FirClassSymbol<*>,
         context: NestedClassGenerationContext,
     ): Set<Name> = when {
-        configuration.blockingImportsEnabled && classSymbol.isEligibleProjectionOwner() ->
+        configuration.enabledImports.isNotEmpty() && classSymbol.isEligibleProjectionOwner() ->
             setOf(projectionsName)
-        classSymbol.isGeneratedProjectionsNamespace() -> setOf(VIA_BLOCKING_NAME)
+        classSymbol.isGeneratedProjectionsNamespace() ->
+            configuration.enabledImports.mapTo(linkedSetOf()) { it.viaName() }
         else -> emptySet()
     }
 
@@ -72,12 +73,13 @@ internal class SuspendProjectionFirDeclarationGenerator(
                 modality = Modality.ABSTRACT
             }.symbol
 
-        name == VIA_BLOCKING_NAME && owner.isGeneratedProjectionsNamespace() -> {
+        owner.isGeneratedProjectionsNamespace() &&
+            configuration.enabledImports.any { it.viaName() == name } -> {
             val canonicalOwner = canonicalOwner(owner) ?: return null
             val canonicalTypeParameters = canonicalOwner.fir.typeParameters.map { it.symbol }
             createNestedClass(
                 owner,
-                VIA_BLOCKING_NAME,
+                name,
                 SuspendProjectionGeneratedDeclarationKey,
                 ClassKind.INTERFACE,
             ) {
@@ -115,9 +117,9 @@ internal class SuspendProjectionFirDeclarationGenerator(
         classSymbol: FirClassSymbol<*>,
         context: MemberGenerationContext,
     ): Set<Name> {
-        if (!classSymbol.isGeneratedViaBlocking()) return emptySet()
+        val projection = classSymbol.generatedProjection() ?: return emptySet()
         return canonicalFunctions(classSymbol).flatMapTo(linkedSetOf()) { function ->
-            listOf(function.name, blockingName(function.name))
+            listOf(function.name, projection.namedFunction(function.name))
         }
     }
 
@@ -126,10 +128,10 @@ internal class SuspendProjectionFirDeclarationGenerator(
         context: MemberGenerationContext?,
     ): List<FirNamedFunctionSymbol> {
         val owner = context?.owner ?: return emptyList()
-        if (!owner.isGeneratedViaBlocking()) return emptyList()
+        val projection = owner.generatedProjection() ?: return emptyList()
         val originals = canonicalFunctions(owner).filter { function ->
             function.name == callableId.callableName ||
-                blockingName(function.name) == callableId.callableName
+                projection.namedFunction(function.name) == callableId.callableName
         }
 
         return originals.map { original ->
@@ -138,11 +140,16 @@ internal class SuspendProjectionFirDeclarationGenerator(
                 SuspendProjectionGeneratedDeclarationKey,
                 callableId.callableName,
                 { generatedTypeParameters ->
-                    original.substituteType(
+                    val canonicalReturnType = original.substituteType(
                         original.resolvedReturnType,
                         owner,
                         generatedTypeParameters,
                     )
+                    if (callableId.callableName == original.name) {
+                        canonicalReturnType
+                    } else {
+                        projection.wrap(session, canonicalReturnType)
+                    }
                 },
             ) {
                 visibility = Visibilities.Public
@@ -209,18 +216,20 @@ internal class SuspendProjectionFirDeclarationGenerator(
     private fun FirClassSymbol<*>.isGeneratedProjectionsNamespace(): Boolean =
         name == projectionsName && canonicalOwner(this)?.isEligibleProjectionOwner() == true
 
-    private fun FirClassSymbol<*>.isGeneratedViaBlocking(): Boolean =
-        name == VIA_BLOCKING_NAME && classId.outerClassId?.shortClassName == projectionsName
+    private fun FirClassSymbol<*>.generatedProjection(): JvmProjection? {
+        if (classId.outerClassId?.shortClassName != projectionsName) return null
+        return configuration.enabledImports.singleOrNull { it.viaName() == name }
+    }
 
     private fun canonicalOwner(symbol: FirClassSymbol<*>): FirClassSymbol<*>? {
         val ownerId = symbol.classId.outerClassId ?: return null
-        val canonicalId = if (symbol.name == VIA_BLOCKING_NAME) ownerId.outerClassId else ownerId
+        val canonicalId = if (symbol.generatedProjection() != null) ownerId.outerClassId else ownerId
         return canonicalId?.let { session.symbolProvider.getClassLikeSymbolByClassId(it) as? FirClassSymbol<*> }
     }
 
     @OptIn(DirectDeclarationsAccess::class)
     private fun canonicalFunctions(symbol: FirClassSymbol<*>): List<FirNamedFunctionSymbol> {
-        val canonical = if (symbol.isGeneratedViaBlocking()) canonicalOwner(symbol) else symbol
+        val canonical = if (symbol.generatedProjection() != null) canonicalOwner(symbol) else symbol
         return canonical?.declarationSymbols
             ?.filterIsInstance<FirNamedFunctionSymbol>()
             ?.filter { function ->
@@ -266,10 +275,44 @@ internal class SuspendProjectionFirDeclarationGenerator(
         return ConeSubstitutorByMap.create(substitution, session, false).substituteOrSelf(type)
     }
 
-    private fun blockingName(name: Name): Name = Name.identifier(name.asString() + "Blocking")
+    private fun JvmProjection.viaName(): Name = Name.identifier(
+        when (this) {
+            JvmProjection.BLOCKING -> "ViaBlocking"
+            JvmProjection.COMPLETION_STAGE -> "ViaCompletionStage"
+            JvmProjection.COMPLETABLE_FUTURE -> "ViaCompletableFuture"
+            JvmProjection.FUTURE -> "ViaFuture"
+            JvmProjection.NONE -> error("NONE has no generated implementation type")
+        },
+    )
+
+    private fun JvmProjection.namedFunction(name: Name): Name = Name.identifier(
+        name.asString() + when (this) {
+            JvmProjection.BLOCKING -> "Blocking"
+            JvmProjection.COMPLETION_STAGE -> "CompletionStage"
+            JvmProjection.COMPLETABLE_FUTURE -> "CompletableFuture"
+            JvmProjection.FUTURE -> "Future"
+            JvmProjection.NONE -> error("NONE has no projected function")
+        },
+    )
+
+    private fun JvmProjection.wrap(session: FirSession, type: ConeKotlinType): ConeKotlinType {
+        if (this == JvmProjection.BLOCKING) return type
+        val classId = ClassId.topLevel(
+            FqName(
+                when (this) {
+                    JvmProjection.COMPLETION_STAGE -> "java.util.concurrent.CompletionStage"
+                    JvmProjection.COMPLETABLE_FUTURE -> "java.util.concurrent.CompletableFuture"
+                    JvmProjection.FUTURE -> "java.util.concurrent.Future"
+                    else -> error("Projection $this does not wrap a return type")
+                },
+            ),
+        )
+        val symbol = session.symbolProvider.getClassLikeSymbolByClassId(classId)
+            ?: error("Projection return type $classId was not found")
+        return symbol.constructType(arrayOf(type), false)
+    }
 
     private companion object {
-        val VIA_BLOCKING_NAME: Name = Name.identifier("ViaBlocking")
         val SUSPEND_PROJECTION_CLASS_ID: ClassId = ClassId.topLevel(
             FqName("cn.chuanwise.kotlinsuspendprojection.annotations.SuspendProjection"),
         )

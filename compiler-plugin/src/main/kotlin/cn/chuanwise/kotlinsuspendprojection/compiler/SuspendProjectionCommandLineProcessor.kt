@@ -15,8 +15,8 @@ class SuspendProjectionCommandLineProcessor : CommandLineProcessor {
         option(SELECTION_MODE, "all|annotated", "Selects declarations eligible for projection"),
         option(GENERATED_TYPES_NAMESPACE, "identifier", "Generated nested namespace name"),
         option(RAW_SUSPEND_ABI, "hidden|visible", "Controls Java visibility of raw suspend ABI"),
-        option(SAME_NAME_CALLER, "none|blocking", "Selects the same-name caller projection"),
-        option(DIRECT_IMPLEMENTATION, "none|blocking", "Selects direct implementation projection"),
+        option(SAME_NAME_CALLER, PROJECTION_VALUES, "Selects the same-name caller projection"),
+        option(DIRECT_IMPLEMENTATION, PROJECTION_VALUES, "Selects direct implementation projection"),
         option(
             DIRECT_IMPLEMENTATION_ENFORCEMENT,
             "guarded-default|strict",
@@ -30,6 +30,15 @@ class SuspendProjectionCommandLineProcessor : CommandLineProcessor {
         booleanOption(BLOCKING_EXPORTS_ENABLED, "Enables Blocking caller exports"),
         booleanOption(BLOCKING_EMIT_NAMED_CALLER, "Emits projection-named Blocking callers"),
         booleanOption(BLOCKING_IMPORTS_ENABLED, "Enables ViaBlocking implementation imports"),
+        booleanOption(COMPLETION_STAGE_EXPORTS_ENABLED, "Enables CompletionStage caller exports"),
+        booleanOption(COMPLETION_STAGE_EMIT_NAMED_CALLER, "Emits CompletionStage named callers"),
+        booleanOption(COMPLETION_STAGE_IMPORTS_ENABLED, "Enables ViaCompletionStage imports"),
+        booleanOption(COMPLETABLE_FUTURE_EXPORTS_ENABLED, "Enables CompletableFuture caller exports"),
+        booleanOption(COMPLETABLE_FUTURE_EMIT_NAMED_CALLER, "Emits CompletableFuture named callers"),
+        booleanOption(COMPLETABLE_FUTURE_IMPORTS_ENABLED, "Enables ViaCompletableFuture imports"),
+        booleanOption(FUTURE_EXPORTS_ENABLED, "Enables Future caller exports"),
+        booleanOption(FUTURE_EMIT_NAMED_CALLER, "Emits Future named callers"),
+        booleanOption(FUTURE_IMPORTS_ENABLED, "Enables ViaFuture imports"),
         booleanOption(EMIT_COMPATIBILITY_GUARD, "Emits generated-code compatibility checks"),
         booleanOption(EMIT_INVALID_PATH_GUARD, "Emits recursive invalid adapter-path checks"),
     )
@@ -68,6 +77,60 @@ class SuspendProjectionCommandLineProcessor : CommandLineProcessor {
             BLOCKING_IMPORTS_ENABLED -> putBoolean(
                 configuration,
                 SuspendProjectionConfigurationKeys.BLOCKING_IMPORTS_ENABLED,
+                option.optionName,
+                value,
+            )
+            COMPLETION_STAGE_EXPORTS_ENABLED -> putBoolean(
+                configuration,
+                SuspendProjectionConfigurationKeys.COMPLETION_STAGE_EXPORTS_ENABLED,
+                option.optionName,
+                value,
+            )
+            COMPLETION_STAGE_EMIT_NAMED_CALLER -> putBoolean(
+                configuration,
+                SuspendProjectionConfigurationKeys.COMPLETION_STAGE_EMIT_NAMED_CALLER,
+                option.optionName,
+                value,
+            )
+            COMPLETION_STAGE_IMPORTS_ENABLED -> putBoolean(
+                configuration,
+                SuspendProjectionConfigurationKeys.COMPLETION_STAGE_IMPORTS_ENABLED,
+                option.optionName,
+                value,
+            )
+            COMPLETABLE_FUTURE_EXPORTS_ENABLED -> putBoolean(
+                configuration,
+                SuspendProjectionConfigurationKeys.COMPLETABLE_FUTURE_EXPORTS_ENABLED,
+                option.optionName,
+                value,
+            )
+            COMPLETABLE_FUTURE_EMIT_NAMED_CALLER -> putBoolean(
+                configuration,
+                SuspendProjectionConfigurationKeys.COMPLETABLE_FUTURE_EMIT_NAMED_CALLER,
+                option.optionName,
+                value,
+            )
+            COMPLETABLE_FUTURE_IMPORTS_ENABLED -> putBoolean(
+                configuration,
+                SuspendProjectionConfigurationKeys.COMPLETABLE_FUTURE_IMPORTS_ENABLED,
+                option.optionName,
+                value,
+            )
+            FUTURE_EXPORTS_ENABLED -> putBoolean(
+                configuration,
+                SuspendProjectionConfigurationKeys.FUTURE_EXPORTS_ENABLED,
+                option.optionName,
+                value,
+            )
+            FUTURE_EMIT_NAMED_CALLER -> putBoolean(
+                configuration,
+                SuspendProjectionConfigurationKeys.FUTURE_EMIT_NAMED_CALLER,
+                option.optionName,
+                value,
+            )
+            FUTURE_IMPORTS_ENABLED -> putBoolean(
+                configuration,
+                SuspendProjectionConfigurationKeys.FUTURE_IMPORTS_ENABLED,
                 option.optionName,
                 value,
             )
@@ -120,8 +183,19 @@ class SuspendProjectionCommandLineProcessor : CommandLineProcessor {
         const val BLOCKING_EXPORTS_ENABLED = "blockingExportsEnabled"
         const val BLOCKING_EMIT_NAMED_CALLER = "blockingEmitNamedCaller"
         const val BLOCKING_IMPORTS_ENABLED = "blockingImportsEnabled"
+        const val COMPLETION_STAGE_EXPORTS_ENABLED = "completionStageExportsEnabled"
+        const val COMPLETION_STAGE_EMIT_NAMED_CALLER = "completionStageEmitNamedCaller"
+        const val COMPLETION_STAGE_IMPORTS_ENABLED = "completionStageImportsEnabled"
+        const val COMPLETABLE_FUTURE_EXPORTS_ENABLED = "completableFutureExportsEnabled"
+        const val COMPLETABLE_FUTURE_EMIT_NAMED_CALLER = "completableFutureEmitNamedCaller"
+        const val COMPLETABLE_FUTURE_IMPORTS_ENABLED = "completableFutureImportsEnabled"
+        const val FUTURE_EXPORTS_ENABLED = "futureExportsEnabled"
+        const val FUTURE_EMIT_NAMED_CALLER = "futureEmitNamedCaller"
+        const val FUTURE_IMPORTS_ENABLED = "futureImportsEnabled"
         const val EMIT_COMPATIBILITY_GUARD = "emitCompatibilityGuard"
         const val EMIT_INVALID_PATH_GUARD = "emitInvalidPathGuard"
+        const val PROJECTION_VALUES =
+            "none|blocking|completion-stage|completable-future|future"
 
         fun option(name: String, valueDescription: String, description: String): CliOption =
             CliOption(name, valueDescription, description, required = false)

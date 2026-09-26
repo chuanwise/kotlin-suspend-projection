@@ -1,6 +1,8 @@
 package cn.chuanwise.kotlinsuspendprojection.runtime.jvm
 
 import cn.chuanwise.kotlinsuspendprojection.runtime.IncompatibleSuspendProjectionRuntimeException
+import java.util.concurrent.CompletableFuture
+import java.util.concurrent.FutureTask
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -87,6 +89,69 @@ class SuspendProjectionRuntimeGuardsTest {
                 ) { "ok" }
             },
         )
+    }
+
+    @Test
+    fun futureExportsCompleteWithValuesAndFailures() {
+        val success = startCompletableFutureSuspendProjection(
+            1,
+            "Foo.foo:completable-future:exports",
+            true,
+            true,
+        ) { "ok" }
+        assertEquals("ok", success.get())
+
+        val failure = startCompletionStageSuspendProjection(
+            1,
+            "Foo.foo:completion-stage:exports",
+            true,
+            true,
+        ) { throw ExampleFailure() }.toCompletableFuture()
+        assertFailsWith<ExampleFailure> {
+            try {
+                failure.get()
+            } catch (exception: java.util.concurrent.ExecutionException) {
+                throw exception.cause ?: exception
+            }
+        }
+    }
+
+    @Test
+    fun completionStageImportResumesWithoutTransportWrapper() {
+        val stage = CompletableFuture<String>()
+        Thread { stage.complete("async") }.start()
+        assertEquals(
+            "async",
+            SuspendProjectionBlocking.await {
+                awaitCompletionStageSuspendProjection(1, "stage", true, true) { stage }
+            },
+        )
+
+        val failed = CompletableFuture<String>()
+        failed.completeExceptionally(ExampleFailure())
+        assertFailsWith<ExampleFailure> {
+            SuspendProjectionBlocking.await {
+                awaitCompletableFutureSuspendProjection(1, "future", true, true) { failed }
+            }
+        }
+    }
+
+    @Test
+    fun plainFutureImportUsesGetAndUnwrapsExecutionException() {
+        val success = FutureTask { "ok" }.also { it.run() }
+        assertEquals(
+            "ok",
+            SuspendProjectionBlocking.await {
+                awaitFutureSuspendProjection(1, "future-success", true, true) { success }
+            },
+        )
+
+        val failure = FutureTask<String> { throw ExampleFailure() }.also { it.run() }
+        assertFailsWith<ExampleFailure> {
+            SuspendProjectionBlocking.await {
+                awaitFutureSuspendProjection(1, "future-failure", true, true) { failure }
+            }
+        }
     }
 
     private inline fun withProperty(name: String, value: String, block: () -> Unit) {

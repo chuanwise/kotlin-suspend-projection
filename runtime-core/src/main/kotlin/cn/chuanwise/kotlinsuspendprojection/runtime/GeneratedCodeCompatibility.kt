@@ -25,6 +25,8 @@ public object SuspendProjectionGeneratedCode {
 public object SuspendProjectionCancellationCapabilities {
     public const val NONE: String = "none"
     public const val WAITER_INTERRUPTION_ONLY: String = "waiter-interruption-only"
+    public const val COMPLETION_CALLBACK: String = "completion-callback"
+    public const val FUTURE_GET: String = "future-get"
 }
 
 public class IncompatibleSuspendProjectionRuntimeException(

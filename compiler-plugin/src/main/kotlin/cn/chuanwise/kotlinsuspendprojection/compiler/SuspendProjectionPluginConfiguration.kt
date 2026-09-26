@@ -15,6 +15,9 @@ internal enum class SelectionMode(override val optionValue: String) : CompilerOp
 internal enum class JvmProjection(override val optionValue: String) : CompilerOptionValue {
     NONE("none"),
     BLOCKING("blocking"),
+    COMPLETION_STAGE("completion-stage"),
+    COMPLETABLE_FUTURE("completable-future"),
+    FUTURE("future"),
 }
 
 internal enum class RawSuspendAbi(override val optionValue: String) : CompilerOptionValue {
@@ -46,14 +49,53 @@ internal data class SuspendProjectionPluginConfiguration(
     val blockingExportsEnabled: Boolean,
     val blockingEmitNamedCaller: Boolean,
     val blockingImportsEnabled: Boolean,
+    val completionStageExportsEnabled: Boolean,
+    val completionStageEmitNamedCaller: Boolean,
+    val completionStageImportsEnabled: Boolean,
+    val completableFutureExportsEnabled: Boolean,
+    val completableFutureEmitNamedCaller: Boolean,
+    val completableFutureImportsEnabled: Boolean,
+    val futureExportsEnabled: Boolean,
+    val futureEmitNamedCaller: Boolean,
+    val futureImportsEnabled: Boolean,
     val emitCompatibilityGuard: Boolean,
     val emitInvalidPathGuard: Boolean,
 ) {
-    val hasBlockingOwnerSurface: Boolean
-        get() = blockingExportsEnabled || directImplementation == JvmProjection.BLOCKING
+    val enabledImports: List<JvmProjection>
+        get() = JvmProjection.entries.filter(::importsEnabled)
+
+    val enabledExports: List<JvmProjection>
+        get() = JvmProjection.entries.filter(::exportsEnabled)
+
+    val hasOwnerSurface: Boolean
+        get() = enabledExports.isNotEmpty() || directImplementation != JvmProjection.NONE
 
     val hasAnyProjection: Boolean
-        get() = hasBlockingOwnerSurface || blockingImportsEnabled
+        get() = hasOwnerSurface || enabledImports.isNotEmpty()
+
+    fun exportsEnabled(projection: JvmProjection): Boolean = when (projection) {
+        JvmProjection.BLOCKING -> blockingExportsEnabled
+        JvmProjection.COMPLETION_STAGE -> completionStageExportsEnabled
+        JvmProjection.COMPLETABLE_FUTURE -> completableFutureExportsEnabled
+        JvmProjection.FUTURE -> futureExportsEnabled
+        JvmProjection.NONE -> false
+    }
+
+    fun emitNamedCaller(projection: JvmProjection): Boolean = when (projection) {
+        JvmProjection.BLOCKING -> blockingEmitNamedCaller
+        JvmProjection.COMPLETION_STAGE -> completionStageEmitNamedCaller
+        JvmProjection.COMPLETABLE_FUTURE -> completableFutureEmitNamedCaller
+        JvmProjection.FUTURE -> futureEmitNamedCaller
+        JvmProjection.NONE -> false
+    }
+
+    fun importsEnabled(projection: JvmProjection): Boolean = when (projection) {
+        JvmProjection.BLOCKING -> blockingImportsEnabled
+        JvmProjection.COMPLETION_STAGE -> completionStageImportsEnabled
+        JvmProjection.COMPLETABLE_FUTURE -> completableFutureImportsEnabled
+        JvmProjection.FUTURE -> futureImportsEnabled
+        JvmProjection.NONE -> false
+    }
 }
 
 internal object SuspendProjectionConfigurationKeys {
@@ -77,6 +119,24 @@ internal object SuspendProjectionConfigurationKeys {
         CompilerConfigurationKey.create("blocking named caller enabled")
     val BLOCKING_IMPORTS_ENABLED: CompilerConfigurationKey<Boolean> =
         CompilerConfigurationKey.create("blocking imports enabled")
+    val COMPLETION_STAGE_EXPORTS_ENABLED: CompilerConfigurationKey<Boolean> =
+        CompilerConfigurationKey.create("completion stage exports enabled")
+    val COMPLETION_STAGE_EMIT_NAMED_CALLER: CompilerConfigurationKey<Boolean> =
+        CompilerConfigurationKey.create("completion stage named caller enabled")
+    val COMPLETION_STAGE_IMPORTS_ENABLED: CompilerConfigurationKey<Boolean> =
+        CompilerConfigurationKey.create("completion stage imports enabled")
+    val COMPLETABLE_FUTURE_EXPORTS_ENABLED: CompilerConfigurationKey<Boolean> =
+        CompilerConfigurationKey.create("completable future exports enabled")
+    val COMPLETABLE_FUTURE_EMIT_NAMED_CALLER: CompilerConfigurationKey<Boolean> =
+        CompilerConfigurationKey.create("completable future named caller enabled")
+    val COMPLETABLE_FUTURE_IMPORTS_ENABLED: CompilerConfigurationKey<Boolean> =
+        CompilerConfigurationKey.create("completable future imports enabled")
+    val FUTURE_EXPORTS_ENABLED: CompilerConfigurationKey<Boolean> =
+        CompilerConfigurationKey.create("future exports enabled")
+    val FUTURE_EMIT_NAMED_CALLER: CompilerConfigurationKey<Boolean> =
+        CompilerConfigurationKey.create("future named caller enabled")
+    val FUTURE_IMPORTS_ENABLED: CompilerConfigurationKey<Boolean> =
+        CompilerConfigurationKey.create("future imports enabled")
     val EMIT_COMPATIBILITY_GUARD: CompilerConfigurationKey<Boolean> =
         CompilerConfigurationKey.create("emit compatibility guard")
     val EMIT_INVALID_PATH_GUARD: CompilerConfigurationKey<Boolean> =
@@ -117,6 +177,24 @@ internal fun CompilerConfiguration.suspendProjectionConfiguration():
             this[SuspendProjectionConfigurationKeys.BLOCKING_EMIT_NAMED_CALLER] ?: true,
         blockingImportsEnabled =
             this[SuspendProjectionConfigurationKeys.BLOCKING_IMPORTS_ENABLED] ?: true,
+        completionStageExportsEnabled =
+            this[SuspendProjectionConfigurationKeys.COMPLETION_STAGE_EXPORTS_ENABLED] ?: true,
+        completionStageEmitNamedCaller =
+            this[SuspendProjectionConfigurationKeys.COMPLETION_STAGE_EMIT_NAMED_CALLER] ?: true,
+        completionStageImportsEnabled =
+            this[SuspendProjectionConfigurationKeys.COMPLETION_STAGE_IMPORTS_ENABLED] ?: true,
+        completableFutureExportsEnabled =
+            this[SuspendProjectionConfigurationKeys.COMPLETABLE_FUTURE_EXPORTS_ENABLED] ?: true,
+        completableFutureEmitNamedCaller =
+            this[SuspendProjectionConfigurationKeys.COMPLETABLE_FUTURE_EMIT_NAMED_CALLER] ?: true,
+        completableFutureImportsEnabled =
+            this[SuspendProjectionConfigurationKeys.COMPLETABLE_FUTURE_IMPORTS_ENABLED] ?: true,
+        futureExportsEnabled =
+            this[SuspendProjectionConfigurationKeys.FUTURE_EXPORTS_ENABLED] ?: true,
+        futureEmitNamedCaller =
+            this[SuspendProjectionConfigurationKeys.FUTURE_EMIT_NAMED_CALLER] ?: true,
+        futureImportsEnabled =
+            this[SuspendProjectionConfigurationKeys.FUTURE_IMPORTS_ENABLED] ?: true,
         emitCompatibilityGuard =
             this[SuspendProjectionConfigurationKeys.EMIT_COMPATIBILITY_GUARD] ?: true,
         emitInvalidPathGuard =

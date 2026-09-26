@@ -59,6 +59,12 @@ class SuspendProjectionGradlePluginTest {
         assertFalse(hasEntry(jar, "sample/PrivateOwner\$Interop.class"))
         assertFalse(hasEntry(jar, "sample/ProtectedOwner\$Interop.class"))
         assertTrue(hasEntry(jar, "sample/JavaDirectOwner.class"))
+        assertTrue(hasEntry(jar, "sample/AsyncApi\$Interop\$ViaCompletionStage.class"))
+        assertTrue(hasEntry(jar, "sample/AsyncApi\$Interop\$ViaCompletableFuture.class"))
+        assertTrue(hasEntry(jar, "sample/AsyncApi\$Interop\$ViaFuture.class"))
+        assertTrue(hasEntry(jar, "sample/JavaAsyncOwners\$Stage.class"))
+        assertTrue(hasEntry(jar, "sample/JavaAsyncOwners\$Completable.class"))
+        assertTrue(hasEntry(jar, "sample/JavaAsyncOwners\$Legacy.class"))
         assertTrue(projectionMethods.contains("echoBlocking"))
         assertTrue(projectionMethods.contains("echo"))
         assertTrue(projectionMethods.contains("mapBlocking"))
@@ -78,6 +84,9 @@ class SuspendProjectionGradlePluginTest {
         assertTrue(ownerMethods.contains("roundTrip"))
         assertTrue(ownerMethods.contains("nullableRoundTrip"))
         assertTrue(ownerMethods.contains("tokenRoundTrip"))
+        assertTrue(ownerMethods.contains("echoCompletionStage"))
+        assertTrue(ownerMethods.contains("echoCompletableFuture"))
+        assertTrue(ownerMethods.contains("echoFuture"))
         assertTrue(partialProjectionMethods.contains("selectedBlocking"))
         assertFalse(partialProjectionMethods.contains("skippedBlocking"))
         assertTrue(
@@ -117,6 +126,33 @@ class SuspendProjectionGradlePluginTest {
         assertTrue(result.task(":compileKotlin")?.outcome == TaskOutcome.SUCCESS)
         assertTrue(result.task(":compileJava")?.outcome == TaskOutcome.FAILED)
         assertTrue(result.output.contains("second"))
+    }
+
+    @Test
+    fun `completion stage primary supports Kotlin and Java direct implementations`() {
+        val projectDir = Files.createTempDirectory("suspend-projection-stage-primary-test")
+        val repository = projectDir.resolve("repository").createDirectories()
+        installProjectArtifacts(repository)
+        writeCompletionStagePrimaryProject(projectDir, repository)
+
+        val result = GradleRunner.create()
+            .withProjectDir(projectDir.toFile())
+            .withTestKitDir(
+                Path.of(checkNotNull(System.getProperty("suspendProjection.testKitDir"))).toFile(),
+            )
+            .withArguments("clean", "build", "verifySuspendProjections", "--stacktrace")
+            .build()
+
+        assertTrue(result.task(":compileKotlin")?.outcome == TaskOutcome.SUCCESS)
+        assertTrue(result.task(":compileJava")?.outcome == TaskOutcome.SUCCESS)
+        assertTrue(result.task(":verifySuspendProjections")?.outcome == TaskOutcome.SUCCESS)
+
+        val jar = projectDir.resolve("build/libs/stage-primary.jar")
+        val methods = readMethodNames(jar, "sample/StageApi.class")
+        assertTrue(methods.contains("load"))
+        assertFalse(methods.contains("loadCompletionStage"))
+        assertTrue(hasEntry(jar, "sample/JavaStageApi.class"))
+        assertTrue(hasEntry(jar, "sample/KotlinStageApi.class"))
     }
 
     private fun installProjectArtifacts(repository: Path) {
@@ -239,6 +275,11 @@ class SuspendProjectionGradlePluginTest {
                     suspend fun skipped(value: String): String
                 }
 
+                @SuspendProjection
+                interface AsyncApi {
+                    suspend fun load(value: String): String
+                }
+
                 interface UnannotatedOwner {
                     suspend fun untouched(): String
                 }
@@ -323,6 +364,49 @@ class SuspendProjectionGradlePluginTest {
                 """.trimIndent(),
             )
         }
+        projectDir.resolve("src/main/java/sample/JavaAsyncOwners.java").apply {
+            parent.createDirectories()
+            writeText(
+                """
+                package sample;
+
+                import java.util.concurrent.CompletableFuture;
+                import java.util.concurrent.CompletionStage;
+                import java.util.concurrent.Future;
+
+                public final class JavaAsyncOwners {
+                    public static final class Stage
+                            implements AsyncApi.Interop.ViaCompletionStage {
+                        @Override public CompletionStage<String> loadCompletionStage(String value) {
+                            return CompletableFuture.completedFuture(value);
+                        }
+                    }
+
+                    public static final class Completable
+                            implements AsyncApi.Interop.ViaCompletableFuture {
+                        @Override public CompletableFuture<String> loadCompletableFuture(
+                                String value
+                        ) {
+                            return CompletableFuture.completedFuture(value);
+                        }
+                    }
+
+                    public static final class Legacy
+                            implements AsyncApi.Interop.ViaFuture {
+                        @Override public Future<String> loadFuture(String value) {
+                            return CompletableFuture.completedFuture(value);
+                        }
+                    }
+
+                    public static void callers(AsyncApi api) {
+                        CompletionStage<String> stage = api.loadCompletionStage("stage");
+                        CompletableFuture<String> future = api.loadCompletableFuture("future");
+                        Future<String> legacy = api.loadFuture("legacy");
+                    }
+                }
+                """.trimIndent(),
+            )
+        }
     }
 
     private fun writeStrictFailureProject(projectDir: Path, repository: Path) {
@@ -383,6 +467,82 @@ class SuspendProjectionGradlePluginTest {
 
                 public final class IncompleteJavaApi implements RequiredApi {
                     @Override public String first(String value) { return value; }
+                }
+                """.trimIndent(),
+            )
+        }
+    }
+
+    private fun writeCompletionStagePrimaryProject(projectDir: Path, repository: Path) {
+        val root = Path.of(checkNotNull(System.getProperty("suspendProjection.repoRoot")))
+        val repositoryUri = repository.toUri().toASCIIString()
+        val kotlinVersion = checkNotNull(System.getProperty("suspendProjection.kotlinVersion"))
+        val pluginJar = root.resolve("gradle-plugin/build/libs/gradle-plugin.jar")
+            .toUri()
+            .toASCIIString()
+        projectDir.resolve("settings.gradle.kts").writeText(
+            """
+            pluginManagement { repositories { gradlePluginPortal(); mavenCentral() } }
+            dependencyResolutionManagement {
+                repositories { maven { url = uri("$repositoryUri") }; mavenCentral() }
+            }
+            rootProject.name = "stage-primary"
+            """.trimIndent(),
+        )
+        projectDir.resolve("build.gradle.kts").writeText(
+            """
+            buildscript {
+                repositories { mavenCentral(); gradlePluginPortal() }
+                dependencies {
+                    classpath("org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlinVersion")
+                    classpath(files(uri("$pluginJar")))
+                }
+            }
+
+            apply(plugin = "org.jetbrains.kotlin.jvm")
+            apply(plugin = "cn.chuanwise.kotlinsuspendprojection")
+
+            extensions.configure<cn.chuanwise.kotlinsuspendprojection.gradle.SuspendProjectionExtension> {
+                primary(cn.chuanwise.kotlinsuspendprojection.gradle.JvmProjection.COMPLETION_STAGE)
+            }
+            """.trimIndent(),
+        )
+        projectDir.resolve("src/main/kotlin/sample/StageApi.kt").apply {
+            parent.createDirectories()
+            writeText(
+                """
+                package sample
+
+                import cn.chuanwise.kotlinsuspendprojection.annotations.SuspendProjection
+
+                @SuspendProjection
+                interface StageApi {
+                    suspend fun load(value: String): String
+                }
+
+                class KotlinStageApi : StageApi {
+                    override suspend fun load(value: String): String = value
+                }
+                """.trimIndent(),
+            )
+        }
+        projectDir.resolve("src/main/java/sample/JavaStageApi.java").apply {
+            parent.createDirectories()
+            writeText(
+                """
+                package sample;
+
+                import java.util.concurrent.CompletableFuture;
+                import java.util.concurrent.CompletionStage;
+
+                public final class JavaStageApi implements StageApi {
+                    @Override public CompletionStage<String> load(String value) {
+                        return CompletableFuture.completedFuture(value);
+                    }
+
+                    public static CompletionStage<String> call(StageApi api) {
+                        return api.load("value");
+                    }
                 }
                 """.trimIndent(),
             )

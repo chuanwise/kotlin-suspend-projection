@@ -27,4 +27,6 @@ public object SuspendProjectionMetadata {
     public const val CANCELLATION_NONE: String = "none"
     public const val CANCELLATION_WAITER_INTERRUPTION_ONLY: String =
         "waiter-interruption-only"
+    public const val CANCELLATION_COMPLETION_CALLBACK: String = "completion-callback"
+    public const val CANCELLATION_FUTURE_GET: String = "future-get"
 }

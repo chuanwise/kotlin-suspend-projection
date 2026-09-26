@@ -68,11 +68,6 @@ internal class SameNameBlockingProjectionGenerator(
                 "UninstrumentedProjectionImplementationError",
         ),
     )
-    private val blockingAwaitCallableId = CallableId(
-        packageName = FqName("cn.chuanwise.kotlinsuspendprojection.runtime.jvm"),
-        callableName = Name.identifier("awaitSuspendProjection"),
-    )
-
     fun generate(module: IrModuleFragment) {
         val classes = buildList {
             module.files.forEach { file ->
@@ -88,7 +83,7 @@ internal class SameNameBlockingProjectionGenerator(
             .forEach(::generateInterface)
 
         if (
-            configuration.directImplementation == JvmProjection.BLOCKING &&
+            configuration.directImplementation != JvmProjection.NONE &&
             configuration.directImplementationEnforcement ==
             DirectImplementationEnforcement.STRICT
         ) {
@@ -116,44 +111,55 @@ internal class SameNameBlockingProjectionGenerator(
         addSubclassOptInRequirement(owner)
         eligibleFunctions.forEach { original ->
             hideRawSuspendAbiFromJava(original)
+            val directProjection = configuration.directImplementation
             val directName = directBridgeName(original)
-            val bridgeFlags = linkedMapOf<Name, Int>()
-            if (configuration.blockingExportsEnabled) {
-                if (configuration.sameNameCaller == JvmProjection.BLOCKING) {
-                    bridgeFlags[original.name] = FLAG_SAME_NAME
+            val bridges = linkedMapOf<Name, BridgeSpec>()
+            configuration.enabledExports.forEach { projection ->
+                if (configuration.sameNameCaller == projection) {
+                    bridges.add(original.name, projection, FLAG_SAME_NAME)
                 }
-                if (configuration.blockingEmitNamedCaller) {
-                    bridgeFlags.merge(blockingName(original.name), FLAG_NAMED_CALLER, Int::or)
+                if (configuration.emitNamedCaller(projection)) {
+                    bridges.add(
+                        projection.namedFunction(original.name),
+                        projection,
+                        FLAG_NAMED_CALLER,
+                    )
                 }
             }
             if (directName != null) {
-                bridgeFlags.merge(directName, FLAG_DIRECT_IMPLEMENTATION, Int::or)
+                bridges.add(directName, directProjection, FLAG_DIRECT_IMPLEMENTATION)
             }
 
-            val generated = bridgeFlags.mapValues { (name, flags) ->
+            val generated = bridges.mapValues { (name, spec) ->
                 val isDirect = name == directName
                 val isAbstract = isDirect &&
                     configuration.directImplementationEnforcement ==
                     DirectImplementationEnforcement.STRICT
-                createExportBridge(owner, original, name, isAbstract).also { bridge ->
+                createExportBridge(owner, original, name, spec.projection, isAbstract).also { bridge ->
                     owner.declarations += bridge
                     addGeneratedMetadata(
                         generated = bridge,
                         owner = owner,
                         original = original,
+                        projection = spec.projection,
                         direction = if (isDirect) "bidirectional" else "exports",
-                        flags = flags or if (isAbstract) FLAG_ABSTRACT_CONTRACT else 0,
+                        flags = spec.flags or if (isAbstract) FLAG_ABSTRACT_CONTRACT else 0,
                     )
                 }
             }
             directName?.let { name ->
-                addCanonicalImportDefault(original, generated.getValue(name))
+                addCanonicalImportDefault(
+                    owner,
+                    original,
+                    generated.getValue(name),
+                    directProjection,
+                )
             }
         }
     }
 
     private fun addSubclassOptInRequirement(owner: IrClass) {
-        if (configuration.directImplementation != JvmProjection.BLOCKING) return
+        if (configuration.directImplementation == JvmProjection.NONE) return
         val markerClassId = when (configuration.uninstrumentedKotlin) {
             UninstrumentedKotlin.WARNING -> uninstrumentedWarningClassId
             UninstrumentedKotlin.ERROR -> uninstrumentedErrorClassId
@@ -181,16 +187,26 @@ internal class SameNameBlockingProjectionGenerator(
     }
 
     private fun generateStrictKotlinImplementation(owner: IrClass) {
-        eligibleSuspendFunctions(owner)
+        owner.declarations.filterIsInstance<IrSimpleFunction>()
+            .filter {
+                it.isSuspend && it.visibility == DescriptorVisibilities.PUBLIC
+            }
             .filter(::overridesStrictProjectedFunction)
             .forEach { original ->
                 hideRawSuspendAbiFromJava(original)
                 val bridgeName = checkNotNull(directBridgeName(original))
-                owner.declarations += createExportBridge(owner, original, bridgeName).also { bridge ->
+                val projection = configuration.directImplementation
+                owner.declarations += createExportBridge(
+                    owner,
+                    original,
+                    bridgeName,
+                    projection,
+                ).also { bridge ->
                     addGeneratedMetadata(
                         generated = bridge,
                         owner = owner,
                         original = original,
+                        projection = projection,
                         direction = "exports",
                         flags = FLAG_DIRECT_IMPLEMENTATION or
                             if (bridgeName == original.name) FLAG_SAME_NAME else FLAG_NAMED_CALLER,
@@ -246,7 +262,6 @@ internal class SameNameBlockingProjectionGenerator(
             when (argument) {
                 is IrTypeProjection -> "${argument.variance}:${normalizeType(argument.type, typeParameterIndices)}"
                 is IrStarProjection -> "*"
-                else -> argument.toString()
             }
         }
         return "$classifier$arguments:${simple.nullability}"
@@ -267,6 +282,7 @@ internal class SameNameBlockingProjectionGenerator(
         owner: IrClass,
         original: IrSimpleFunction,
         bridgeName: Name,
+        projection: JvmProjection,
         isAbstract: Boolean = false,
     ): IrSimpleFunction {
         return pluginContext.irFactory.buildFun {
@@ -295,14 +311,15 @@ internal class SameNameBlockingProjectionGenerator(
             original.typeParameters.zip(copiedTypeParameters).forEach { (source, copied) ->
                 copied.superTypes = source.superTypes.map(substitutor::substitute)
             }
-            returnType = substitutor.substitute(original.returnType)
+            val canonicalReturnType = substitutor.substitute(original.returnType)
+            returnType = projection.wrapIrType(pluginContext, canonicalReturnType)
             parameters = original.parameters.map { parameter ->
                 parameter.copyTo(this@bridge).apply {
                     type = substitutor.substitute(parameter.type)
                 }
             }
             if (!isAbstract) {
-                body = createExportBody(owner, original, this@bridge)
+                body = createExportBody(owner, original, this@bridge, projection)
             }
             if (original.usesValueClassInSignature()) {
                 addJvmName(this, bridgeName.asString())
@@ -347,10 +364,16 @@ internal class SameNameBlockingProjectionGenerator(
         owner: IrClass,
         original: IrSimpleFunction,
         bridge: IrSimpleFunction,
+        projection: JvmProjection,
     ) = DeclarationIrBuilder(pluginContext, bridge.symbol).irBlockBody {
-        val suspendLambda = createSuspendLambda(bridge, original)
+        val resultType = if (projection == JvmProjection.BLOCKING) {
+            bridge.returnType
+        } else {
+            ((bridge.returnType as IrSimpleType).arguments.single() as IrTypeProjection).type
+        }
+        val suspendLambda = createSuspendLambda(bridge, original, resultType)
         val lambdaType = pluginContext.irBuiltIns.suspendFunctionN(0)
-            .typeWith(bridge.returnType)
+            .typeWith(resultType)
         val lambdaExpression = IrFunctionExpressionImpl(
             UNDEFINED_OFFSET,
             UNDEFINED_OFFSET,
@@ -358,37 +381,38 @@ internal class SameNameBlockingProjectionGenerator(
             suspendLambda,
             IrStatementOrigin.LAMBDA,
         )
-        val blockingAwait = pluginContext.referenceFunctions(blockingAwaitCallableId).singleOrNull()
+        val runtimeAdapter = pluginContext.referenceFunctions(projection.runtimeExportCallableId)
+            .singleOrNull()
             ?: error(
-                "awaitSuspendProjection was not found. " +
+                "Runtime export adapter for $projection was not found. " +
                     "The runtime-jvm artifact must be on the producer compilation classpath.",
             )
 
         +irReturn(
-            irCall(blockingAwait).apply {
-                typeArguments[0] = bridge.returnType
+            irCall(runtimeAdapter).apply {
+                typeArguments[0] = resultType
                 arguments[0] = IrConstImpl.int(
                     startOffset,
                     endOffset,
-                    blockingAwait.owner.parameters[0].type,
+                    runtimeAdapter.owner.parameters[0].type,
                     1,
                 )
                 arguments[1] = IrConstImpl.string(
                     startOffset,
                     endOffset,
-                    blockingAwait.owner.parameters[1].type,
-                    generatedPathId(owner, original),
+                    runtimeAdapter.owner.parameters[1].type,
+                    generatedPathId(owner, original, projection, "exports"),
                 )
                 arguments[2] = IrConstImpl.boolean(
                     startOffset,
                     endOffset,
-                    blockingAwait.owner.parameters[2].type,
+                    runtimeAdapter.owner.parameters[2].type,
                     configuration.emitCompatibilityGuard,
                 )
                 arguments[3] = IrConstImpl.boolean(
                     startOffset,
                     endOffset,
-                    blockingAwait.owner.parameters[3].type,
+                    runtimeAdapter.owner.parameters[3].type,
                     configuration.emitInvalidPathGuard,
                 )
                 arguments[4] = lambdaExpression
@@ -397,15 +421,74 @@ internal class SameNameBlockingProjectionGenerator(
     }
 
     private fun addCanonicalImportDefault(
+        owner: IrClass,
         canonical: IrSimpleFunction,
         directMethod: IrSimpleFunction,
+        projection: JvmProjection,
     ) {
         canonical.modality = Modality.OPEN
-        canonical.body = DeclarationIrBuilder(pluginContext, canonical.symbol).irBlockBody {
+        canonical.body = if (projection == JvmProjection.BLOCKING) {
+            DeclarationIrBuilder(pluginContext, canonical.symbol).irBlockBody {
+                +irReturn(
+                    irCall(directMethod.symbol).apply {
+                        canonical.typeParameters.forEachIndexed { index, parameter ->
+                            typeArguments[index] = parameter.typeParameterDefaultType
+                        }
+                        canonical.parameters.forEachIndexed { index, parameter ->
+                            arguments[index] = irGet(parameter)
+                        }
+                    },
+                )
+            }
+        } else {
+            DeclarationIrBuilder(pluginContext, canonical.symbol).irBlockBody {
+                val provider = createDirectProviderLambda(canonical, directMethod)
+                val expression = IrFunctionExpressionImpl(
+                    UNDEFINED_OFFSET,
+                    UNDEFINED_OFFSET,
+                    pluginContext.irBuiltIns.functionN(0).typeWith(directMethod.returnType),
+                    provider,
+                    IrStatementOrigin.LAMBDA,
+                )
+                val runtimeAdapter = pluginContext.referenceFunctions(projection.runtimeImportCallableId)
+                    .singleOrNull()
+                    ?: error("Runtime import adapter for $projection was not found")
+                +irReturn(
+                    irCall(runtimeAdapter).apply {
+                        typeArguments[0] = canonical.returnType
+                        arguments[0] = IrConstImpl.int(startOffset, endOffset, runtimeAdapter.owner.parameters[0].type, 1)
+                        arguments[1] = IrConstImpl.string(
+                            startOffset,
+                            endOffset,
+                            runtimeAdapter.owner.parameters[1].type,
+                            generatedPathId(owner, canonical, projection, "imports"),
+                        )
+                        arguments[2] = IrConstImpl.boolean(startOffset, endOffset, runtimeAdapter.owner.parameters[2].type, configuration.emitCompatibilityGuard)
+                        arguments[3] = IrConstImpl.boolean(startOffset, endOffset, runtimeAdapter.owner.parameters[3].type, configuration.emitInvalidPathGuard)
+                        arguments[4] = expression
+                    },
+                )
+            }
+        }
+    }
+
+    private fun createDirectProviderLambda(
+        canonical: IrSimpleFunction,
+        directMethod: IrSimpleFunction,
+    ): IrSimpleFunction = pluginContext.irFactory.buildFun {
+        origin = IrDeclarationOrigin.LOCAL_FUNCTION_FOR_LAMBDA
+        name = SpecialNames.NO_NAME_PROVIDED
+        visibility = DescriptorVisibilities.LOCAL
+        returnType = directMethod.returnType
+        modality = Modality.FINAL
+        isSuspend = false
+    }.apply {
+        parent = canonical
+        body = DeclarationIrBuilder(pluginContext, symbol).irBlockBody {
             +irReturn(
                 irCall(directMethod.symbol).apply {
-                    canonical.typeParameters.forEachIndexed { index, typeParameter ->
-                        typeArguments[index] = typeParameter.typeParameterDefaultType
+                    canonical.typeParameters.forEachIndexed { index, parameter ->
+                        typeArguments[index] = parameter.typeParameterDefaultType
                     }
                     canonical.parameters.forEachIndexed { index, parameter ->
                         arguments[index] = irGet(parameter)
@@ -418,11 +501,12 @@ internal class SameNameBlockingProjectionGenerator(
     private fun createSuspendLambda(
         bridge: IrSimpleFunction,
         original: IrSimpleFunction,
+        resultType: IrType,
     ): IrSimpleFunction = pluginContext.irFactory.buildFun {
         origin = IrDeclarationOrigin.LOCAL_FUNCTION_FOR_LAMBDA
         name = SpecialNames.NO_NAME_PROVIDED
         visibility = DescriptorVisibilities.LOCAL
-        returnType = bridge.returnType
+        returnType = resultType
         modality = Modality.FINAL
         isSuspend = true
     }.apply lambda@{
@@ -445,6 +529,7 @@ internal class SameNameBlockingProjectionGenerator(
         generated: IrSimpleFunction,
         owner: IrClass,
         original: IrSimpleFunction,
+        projection: JvmProjection,
         direction: String,
         flags: Int,
     ) {
@@ -460,11 +545,11 @@ internal class SameNameBlockingProjectionGenerator(
             1,
             "0.1.0-SNAPSHOT",
             origin,
-            "blocking",
+            projection.optionValue,
             direction,
             origin,
             flags,
-            "waiter-interruption-only",
+            projection.cancellationCapability,
         )
 
         generated.annotations += DeclarationIrBuilder(pluginContext, generated.symbol)
@@ -480,8 +565,12 @@ internal class SameNameBlockingProjectionGenerator(
             }
     }
 
-    private fun generatedPathId(owner: IrClass, original: IrSimpleFunction): String =
-        "${generatedOriginId(owner, original)}:blocking:exports"
+    private fun generatedPathId(
+        owner: IrClass,
+        original: IrSimpleFunction,
+        projection: JvmProjection,
+        direction: String,
+    ): String = "${generatedOriginId(owner, original)}:${projection.optionValue}:$direction"
 
     private fun generatedOriginId(owner: IrClass, original: IrSimpleFunction): String = buildString {
         append(owner.fqNameWhenAvailable?.asString() ?: owner.name.asString())
@@ -501,15 +590,27 @@ internal class SameNameBlockingProjectionGenerator(
             owner.annotations.hasAnnotation(suspendProjectionClassId.asSingleFqName())
 
     private fun directBridgeName(original: IrSimpleFunction): Name? =
-        if (configuration.directImplementation != JvmProjection.BLOCKING) {
+        if (configuration.directImplementation == JvmProjection.NONE) {
             null
-        } else if (configuration.sameNameCaller == JvmProjection.BLOCKING) {
+        } else if (configuration.sameNameCaller == configuration.directImplementation) {
             original.name
         } else {
-            blockingName(original.name)
+            configuration.directImplementation.namedFunction(original.name)
         }
 
-    private fun blockingName(name: Name): Name = Name.identifier(name.asString() + "Blocking")
+    private fun MutableMap<Name, BridgeSpec>.add(
+        name: Name,
+        projection: JvmProjection,
+        flag: Int,
+    ) {
+        val previous = this[name]
+        require(previous == null || previous.projection == projection) {
+            "Projected JVM method $name is requested by both ${previous?.projection} and $projection"
+        }
+        this[name] = BridgeSpec(projection, (previous?.flags ?: 0) or flag)
+    }
+
+    private data class BridgeSpec(val projection: JvmProjection, val flags: Int)
 
     private companion object {
         const val FLAG_SAME_NAME: Int = 1

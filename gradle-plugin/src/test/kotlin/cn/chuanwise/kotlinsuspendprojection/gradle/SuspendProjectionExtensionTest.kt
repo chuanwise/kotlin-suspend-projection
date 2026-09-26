@@ -54,12 +54,42 @@ class SuspendProjectionExtensionTest {
         assertEquals(JvmProjection.NONE, extension.jvm.directImplementation.projection)
         assertTrue(extension.jvm.blocking.exports.emitNamedCaller)
         assertTrue(extension.jvm.blocking.imports.enabled)
+        assertTrue(extension.jvm.completionStage.exports.enabled)
+        assertTrue(extension.jvm.completionStage.imports.enabled)
+        assertTrue(extension.jvm.completableFuture.exports.enabled)
+        assertTrue(extension.jvm.completableFuture.imports.enabled)
+        assertTrue(extension.jvm.future.exports.enabled)
+        assertTrue(extension.jvm.future.imports.enabled)
     }
 
     @Test
-    fun `unsupported projection choice fails instead of being ignored`() {
+    fun `completion stage primary configures strict direct implementation`() {
         val extension = SuspendProjectionExtension().apply {
-            jvm { sameNameCaller = JvmProjection.COMPLETION_STAGE }
+            primary(JvmProjection.COMPLETION_STAGE)
+        }
+
+        extension.validate()
+
+        assertEquals(JvmProjection.COMPLETION_STAGE, extension.jvm.sameNameCaller)
+        assertEquals(
+            JvmProjection.COMPLETION_STAGE,
+            extension.jvm.directImplementation.projection,
+        )
+        assertFalse(extension.jvm.completionStage.exports.emitNamedCaller)
+        assertEquals(
+            DirectImplementationEnforcement.STRICT,
+            extension.jvm.directImplementation.enforcement,
+        )
+        assertEquals(
+            UninstrumentedKotlin.ERROR,
+            extension.jvm.directImplementation.uninstrumentedKotlin,
+        )
+    }
+
+    @Test
+    fun `continuation policy choice fails instead of being ignored`() {
+        val extension = SuspendProjectionExtension().apply {
+            jvm { sameNameCaller = JvmProjection.CONTINUATION }
         }
 
         assertFailsWith<IllegalArgumentException> { extension.validate() }
