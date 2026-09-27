@@ -5,3 +5,6 @@
 **/build/
 /.idea/
 *.iml
+idea-plugin/.intellijPlatform/
+idea-plugin/.pluginVerifier/
+idea-plugin/.gradle/

@@ -1,0 +1,22 @@
+<idea-plugin>
+    <id>cn.chuanwise.kotlinsuspendprojection.idea</id>
+    <name>Kotlin Suspend Projection</name>
+    <vendor url="https://github.com/chuanwise/kotlin-suspend-projection">Chuanwise</vendor>
+
+    <description><![CDATA[
+        <p>IDE support for Kotlin Suspend Projection.</p>
+        <p>Shows source-level JVM projection methods to Java before compilation while keeping
+        Java-only projection entry points out of Kotlin source resolution.</p>
+    ]]></description>
+
+    <depends>com.intellij.modules.platform</depends>
+    <depends>com.intellij.modules.java</depends>
+    <depends>org.jetbrains.kotlin</depends>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <lang.psiAugmentProvider
+                implementation="cn.chuanwise.kotlinsuspendprojection.idea.SuspendProjectionPsiAugmentProvider"/>
+        <daemon.highlightInfoFilter
+                implementation="cn.chuanwise.kotlinsuspendprojection.idea.JavaDirectImplementationHighlightFilter"/>
+    </extensions>
+</idea-plugin>
