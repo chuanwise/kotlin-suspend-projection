@@ -102,6 +102,8 @@ val user = service.findUser("42")
 
 这也是本项目与单向 blocking bridge 的主要区别：投影既支持 **Java caller**，也支持 **Java implementer**。已经编译的 library 可以由普通 Java/Kotlin 工程零插件消费；Gradle 和 IDE 插件用于生成、验证及改善开发体验。
 
+安装配套 IDEA 插件后，Java 在编译器插件尚未生成字节码时也能补全、跳转并解析这些 projection 方法。Kotlin 编辑器不会显示仅供 Java 使用的 projection；Java 直接实现 canonical 接口时，也不会收到原始 `Continuation` 方法造成的伪缺失实现错误。详见 [IDEA 插件](docs/idea-plugin.md)。
+
 生成的 `UserService.Projections.ViaBlocking` 也始终保留，供希望明确锁定 Blocking contract 的实现方使用。选择异步 projection 后，还可以实现非阻塞的 `ViaCompletionStage` contract：
 
 ```java
@@ -291,6 +293,7 @@ Projection exports/imports <-> canonical suspend semantics
 - [架构与生成模型](docs/architecture.md)
 - [Java 互操作](docs/java-interop.md)
 - [配置与兼容性](docs/configuration-and-compatibility.md)
+- [IDEA 插件](docs/idea-plugin.md)
 - [开发与测试](docs/development.md)
 
 ## 构建

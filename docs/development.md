@@ -6,7 +6,7 @@
 - 可运行 Kotlin `2.4.20` 插件的 Gradle；
 - Git。
 
-仓库当前没有提交 Gradle Wrapper，因此命令示例使用系统 Gradle。
+根构建当前没有提交 Gradle Wrapper，因此根模块命令示例使用系统 Gradle。`idea-plugin/` 是独立构建，带有自己的 Wrapper。
 
 ## 模块构建
 
@@ -21,6 +21,24 @@ gradle :gradle-plugin:test --tests "*SuspendProjectionGradlePluginTest"
 ```
 
 功能测试会在 `.gradle-test-kit/` 创建隔离缓存。该目录与所有模块的 `build/`、`.gradle/`、`.kotlin/` 都已忽略。
+
+## IDEA 插件
+
+IDEA 插件以独立 Gradle 构建维护，要求 JDK 21：
+
+```shell
+cd idea-plugin
+./gradlew test buildPlugin
+```
+
+Windows 可使用：
+
+```powershell
+cd idea-plugin
+.\gradlew.bat test buildPlugin
+```
+
+插件目标版本、IntelliJ Platform Gradle Plugin 和测试依赖统一声明在 `idea-plugin/gradle/libs.versions.toml`。插件测试覆盖 Java 预生成投影视图、Java direct implementation 诊断、Kotlin 补全隐藏、注解覆盖、泛型、extension receiver 和 value class JVM 类型。
 
 ## 验证重点
 
